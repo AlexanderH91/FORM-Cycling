@@ -1,7 +1,13 @@
 import { supa } from "../supa.js";
+import { OTP_LENGTH } from "../config.js";
 
 const RESEND_COOLDOWN_S = 60;
-const CODE_LENGTH = 6;
+// Supabase allows an OTP of 6–10 digits. OTP_LENGTH is what this project is set
+// to; MIN/MAX keep a mismatched dashboard setting from locking anyone out.
+const CODE_LENGTH = OTP_LENGTH;
+const CODE_MIN = 6;
+const CODE_MAX = 10;
+const A_CODE = `${CODE_LENGTH === 8 ? "an" : "a"} ${CODE_LENGTH}-digit`;
 
 export function renderLogin(view) {
   view.innerHTML = `
@@ -13,7 +19,7 @@ export function renderLogin(view) {
     <h3>Sign in</h3>
 
     <div id="step-email">
-      <p>Enter your email and we'll send you a ${CODE_LENGTH}-digit code. No password to remember.</p>
+      <p>Enter your email and we'll send you ${A_CODE} code. No password to remember.</p>
       <label>Email</label>
       <input id="email" type="email" autocomplete="email" inputmode="email" placeholder="you@example.com">
       <div class="err"></div><div class="ok"></div>
@@ -21,10 +27,10 @@ export function renderLogin(view) {
     </div>
 
     <div id="step-code" class="hidden">
-      <p>We sent a ${CODE_LENGTH}-digit code to <strong id="sent-to"></strong>. It expires in a few minutes.</p>
+      <p>We sent ${A_CODE} code to <strong id="sent-to"></strong>. It expires in a few minutes.</p>
       <label>Code</label>
       <input id="code" type="text" autocomplete="one-time-code" inputmode="numeric"
-             pattern="[0-9]*" placeholder="000000">
+             pattern="[0-9]*" placeholder="${"0".repeat(CODE_LENGTH)}">
       <div class="err"></div><div class="ok"></div>
       <button class="btn" id="verify">Sign in</button>
       <button class="btn secondary" id="resend">Resend code</button>
@@ -117,7 +123,7 @@ export function renderLogin(view) {
   async function verifyCode() {
     if (busy) return;
     const token = codeInput.value.replace(/\D/g, "");
-    if (token.length !== CODE_LENGTH) { say(`Enter the ${CODE_LENGTH}-digit code from your email.`); return; }
+    if (token.length < CODE_MIN) { say(`Enter the ${CODE_LENGTH}-digit code from your email.`); return; }
     say();
     setBusy(true, verifyBtn, "Checking…");
     const { error } = await supa.auth.verifyOtp({ email, token, type: "email" });
@@ -144,8 +150,9 @@ export function renderLogin(view) {
   emailInput.onkeydown = (e) => { if (e.key === "Enter") sendCode(sendBtn, "Sending…"); };
 
   codeInput.oninput = () => {
-    const digits = codeInput.value.replace(/\D/g, "").slice(0, CODE_LENGTH);
+    const digits = codeInput.value.replace(/\D/g, "").slice(0, CODE_MAX);
     if (digits !== codeInput.value) codeInput.value = digits;
+    // Auto-submit at the configured length; longer codes still go by hand.
     if (digits.length === CODE_LENGTH) verifyCode();
   };
   codeInput.onkeydown = (e) => { if (e.key === "Enter") verifyCode(); };

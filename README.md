@@ -9,7 +9,8 @@ Sister app to FORM Golf; same account, same honesty rules.
 - **Static web app** — no build step. Plain ES modules, hash routing (`js/main.js`).
   Deploys straight to GitHub Pages.
 - **Auth + data: Supabase** — the *same project as FORM Golf* (one login across FORM apps).
-  Sign-in is a 6-digit code emailed to you (`signInWithOtp` → `verifyOtp`) — no passwords.
+  Sign-in is a numeric code emailed to you (`signInWithOtp` → `verifyOtp`) — no passwords.
+  Code length lives in `OTP_LENGTH` (`js/config.js`) and must match the dashboard setting.
   Cycling data lives in `public.cycling_sessions` (RLS: users see only their own rows).
   Config in `js/config.js` (publishable key only — safe to commit).
 - **Analysis runs on-device** — MediaPipe Pose Landmarker (WASM) in the browser
@@ -37,8 +38,11 @@ cadence 75–95 rpm (TrainerRoad research review) · aero trade-offs (Fintelman 
 3. App is live at `https://<user>.github.io/form-cycling/` — bookmark / Add to Home Screen.
 4. Supabase → Auth → URL Configuration: add that URL to *Site URL / Redirect URLs*.
 5. Supabase → Auth → Email Templates → *Magic Link*: the body must contain `{{ .Token }}`
-   so the mail carries the 6-digit code the login screen asks for (a link-only template
-   will send a link instead of a code, and the code field will have nothing to accept).
+   so the mail carries a code (a link-only template will send a link instead, and the
+   code field will have nothing to accept).
+6. Supabase → Auth → Providers → Email → *Email OTP Length* (6–10) must equal `OTP_LENGTH`
+   in `js/config.js`. They only drive copy and auto-submit — any code of 6+ digits can
+   still be submitted by hand, and Supabase is the one that accepts or rejects it.
 
 ## Roadmap (from the Ride Report 001 prototype + tester feedback, in order)
 
