@@ -1,6 +1,6 @@
 import { supa } from "../supa.js";
 import { MAX_RECORD_MS } from "../config.js";
-import { analyzeSideClip } from "../analysis.js";
+import { analyzeSideClip, analyzeFrontClip, analyzeRearClip } from "../analysis.js";
 import { go } from "../main.js";
 import { appbar } from "../ui.js";
 
@@ -238,6 +238,24 @@ async function runAnalysis(view, user, state) {
       state.clips.side, state.trims.side,
       (pct, msg) => { bar.style.width = pct + "%"; if (msg) stage.textContent = msg; });
     report.viewsCaptured = Object.keys(state.clips);
+
+    /* The extra views never overturn the side view — they add their own
+       measurements and, where they agree, corroborate its fix. A view that
+       fails its own gate reports that and nothing else. */
+    if (!report.gate) {
+      if (state.clips.front && state.trims.front) {
+        stage.textContent = "Reading your knees from the front…";
+        bar.style.width = "40%";
+        report.front = await analyzeFrontClip(state.clips.front, state.trims.front);
+      }
+      if (state.clips.rear && state.trims.rear) {
+        stage.textContent = "Reading shoulders and pelvis from behind…";
+        bar.style.width = "75%";
+        report.rear = await analyzeRearClip(state.clips.rear, state.trims.rear);
+      }
+      bar.style.width = "100%";
+      addExtraViewCards(report);
+    }
     // Keyframes are frames of your video. The promise is that video never
     // leaves the phone, so they are shown here and never sent to the server.
     const { keyframes, ...stored } = report;
@@ -252,6 +270,53 @@ async function runAnalysis(view, user, state) {
   } catch (e) {
     view.querySelector("#err").textContent = "Analysis failed: " + e.message;
     stage.textContent = "Something went wrong — your clips are still on your phone; try again.";
+  }
+}
+
+/* Cards for the extra views. No verdict word where the project has no cited
+   band — the number and its meaning, and nothing implied beyond it. */
+function addExtraViewCards(r) {
+  const f = r.front;
+  if (f?.gate) {
+    r.cards.push({ name: "Knees from the front", value: "—", note: f.gate });
+  } else if (f) {
+    r.cards.push({
+      name: "Knee travel (front)",
+      value: `${f.kneeTravel.left}° L · ${f.kneeTravel.right}° R`,
+      note: "How far each knee leans in and out across the stroke, measured from vertical. No research band for this in FORM yet, so it is reported without a verdict.",
+    });
+    if (f.asymmetry) {
+      const even = f.asymmetry < 1.35;
+      r.cards.push({
+        name: "Left / right evenness",
+        value: `${f.asymmetry}×`,
+        verdict: even ? "Even" : "Watch",
+        note: even
+          ? "Your knees travel about the same amount — this compares you with yourself, so it needs no external band."
+          : `Your ${f.looser} knee travels ${f.asymmetry}× as far as the other. Worth watching; it compares you with yourself rather than a research band.`,
+      });
+    }
+  }
+
+  const b = r.rear;
+  if (b?.gate) {
+    r.cards.push({ name: "Shoulders and pelvis (behind)", value: "—", note: b.gate });
+  } else if (b) {
+    r.cards.push({
+      name: "Pelvic rock (behind)",
+      value: `${b.pelvicRock}°`,
+      note: "How much your hips tilt side to side over the stroke. Reported without a verdict — FORM has no cited band for it yet.",
+    });
+    r.cards.push({
+      name: "Shoulder rock (behind)",
+      value: `${b.shoulderRock}°`,
+      note: "Side-to-side tilt across the shoulders over the stroke.",
+    });
+    // Rocking is classic evidence of reaching for the pedals. Say so only when
+    // the side view already found the same thing, so the two never disagree.
+    if (r.fix?.title === "Saddle looks high" && b.pelvicRock >= 4) {
+      r.fix.line += ` The rear view agrees — your hips rock ${b.pelvicRock}° chasing the bottom of the stroke.`;
+    }
   }
 }
 
@@ -282,5 +347,5 @@ function drawReport(view, r) {
         <div class="val">${c.value} ${c.verdict ? `<em>${c.verdict}</em>` : ""}</div></div>
         <p>${c.note}</p></div>`).join("")}
     <a class="btn" href="#/home">Done</a>`}
-  <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes · video and these frames never leave the phone · front & behind views ship in the next update</div>`;
+  <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}</div>`;
 }

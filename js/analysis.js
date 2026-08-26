@@ -117,6 +117,103 @@ async function keyframe(video, lm, t, draw, maxW = 720) {
   return { src: c.toDataURL("image/jpeg", 0.82), drawn };
 }
 
+/* Both extra views watch the frontal plane, where the honest unit is an angle
+   from vertical — scale-free, so it needs no calibration. Neither carries a
+   verdict band: no cited research band exists in the project for frontal-plane
+   knee travel or pelvic rock, and inventing one is exactly what rule 4 forbids.
+   Left-versus-right asymmetry IS judged, because it compares the rider to
+   themselves and needs no external threshold. */
+
+async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read) {
+  const lm = await getLandmarker();
+  const video = document.createElement("video");
+  video.muted = true; video.playsInline = true;
+  const srcUrl = URL.createObjectURL(blob);
+  video.src = srcUrl;
+  const release = () => { video.src = ""; URL.revokeObjectURL(srcUrl); };
+  try {
+    await new Promise((res, rej) => {
+      video.onloadedmetadata = res;
+      video.onerror = () => rej(new Error("could not read the video"));
+    });
+    const sq = squareUp((video.videoWidth || 1) / (video.videoHeight || 1));
+    const span = Math.min(t1 - t0, seconds);
+    const rows = [];
+    for (let t = t0, i = 0; t < t0 + span; t += 1 / fps, i++) {
+      video.currentTime = t;
+      await new Promise((res) => { video.onseeked = res; });
+      const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
+      if (p) { const row = read(p, sq, t); if (row) rows.push(row); }
+      onProgress?.(i);
+    }
+    return rows;
+  } finally { release(); }
+}
+
+// Angle of a limb from vertical in the frontal plane; sign is +inward (medial).
+function fromVertical(top, bottom, inwardIsPositive) {
+  const dx = bottom.x - top.x, dy = bottom.y - top.y;
+  const a = deg(Math.atan2(dx, Math.abs(dy) + 1e-9));
+  return inwardIsPositive ? a : -a;
+}
+
+const amplitude = (a) => Math.max(...a) - Math.min(...a);
+
+/* FRONT VIEW — how far each knee wanders sideways over the stroke.
+   Measured per leg as the ankle→knee line's lean from vertical, so it is
+   independent of how far away the phone was. */
+export async function analyzeFrontClip(blob, trim, onProgress) {
+  const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq) => {
+    const need = [23, 24, 25, 26, 27, 28];
+    if (need.some((i) => (p[i].visibility ?? 1) < 0.5)) return null;
+    const L = { hip: sq(p[23]), knee: sq(p[25]), ankle: sq(p[27]) };
+    const R = { hip: sq(p[24]), knee: sq(p[26]), ankle: sq(p[28]) };
+    // Rider faces the camera: their left is on our right, so inward flips.
+    return {
+      left:  fromVertical(L.knee, L.ankle, true),
+      right: fromVertical(R.knee, R.ankle, false),
+      ankleY: (L.ankle.y + R.ankle.y) / 2,
+      hipSpan: Math.abs(L.hip.x - R.hip.x),
+    };
+  });
+  if (rows.length < 12 * 4) return { gate: "We couldn't see both legs clearly for long enough from the front. Check the framing and the light, then film again." };
+
+  const left = amplitude(rows.map((r) => r.left));
+  const right = amplitude(rows.map((r) => r.right));
+  const bigger = Math.max(left, right), smaller = Math.min(left, right);
+  const ratio = smaller > 0.5 ? bigger / smaller : null;
+  const looser = left >= right ? "left" : "right";
+  return {
+    kneeTravel: { left: +left.toFixed(1), right: +right.toFixed(1) },
+    asymmetry: ratio ? +ratio.toFixed(2) : null,
+    looser,
+    frames: rows.length,
+  };
+}
+
+/* REAR VIEW — shoulder and pelvis rock, as the tilt of each line over the
+   stroke. Rock corroborates a saddle that is too high; it does not outrank
+   the side view, which is the view that measures saddle height. */
+export async function analyzeRearClip(blob, trim, onProgress) {
+  const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq) => {
+    const need = [11, 12, 23, 24, 27, 28];
+    if (need.some((i) => (p[i].visibility ?? 1) < 0.5)) return null;
+    const tilt = (a, b) => deg(Math.atan2(sq(b).y - sq(a).y, Math.abs(sq(b).x - sq(a).x) + 1e-9));
+    return {
+      shoulder: tilt(p[11], p[12]),
+      pelvis: tilt(p[23], p[24]),
+      ankleY: (sq(p[27]).y + sq(p[28]).y) / 2,
+    };
+  });
+  if (rows.length < 12 * 4) return { gate: "We couldn't see your shoulders and hips clearly for long enough from behind. Light from the side — never a window straight behind you — then film again." };
+
+  return {
+    shoulderRock: +amplitude(rows.map((r) => r.shoulder)).toFixed(1),
+    pelvicRock: +amplitude(rows.map((r) => r.pelvis)).toFixed(1),
+    frames: rows.length,
+  };
+}
+
 export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   onProgress(3, "Loading the pose model onto your phone…");
   const lm = await getLandmarker();
