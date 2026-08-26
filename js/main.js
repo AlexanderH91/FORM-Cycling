@@ -4,6 +4,7 @@ import { renderHome } from "./pages/home.js";
 import { renderAnalyze } from "./pages/analyze.js";
 import { renderLocked } from "./pages/locked.js";
 import { renderProfile } from "./pages/profile.js";
+import { renderCoach } from "./pages/coach.js";
 
 const view = document.getElementById("view");
 const nav = document.getElementById("nav");
@@ -12,7 +13,7 @@ const routes = {
   login:   { render: renderLogin,  auth: false, nav: false },
   home:    { render: renderHome,   auth: true,  nav: true },
   analyze: { render: renderAnalyze,auth: true,  nav: true },
-  journey: { render: (v)=>renderLocked(v,"Journey","Your long-term riding story lives here — it unlocks after your first few analyses."), auth: true, nav: true },
+  coach:   { render: renderCoach,  auth: true,  nav: true },
   drills:  { render: (v)=>renderLocked(v,"Drills","Targeted exercises matched to your fixes. Coming soon."), auth: true, nav: true },
   profile: { render: renderProfile,auth: true,  nav: true },
 };
