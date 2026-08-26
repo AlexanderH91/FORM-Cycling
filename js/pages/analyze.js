@@ -125,11 +125,14 @@ async function runAnalysis(view, user, state) {
       state.clips.side, state.trims.side,
       (pct, msg) => { bar.style.width = pct + "%"; if (msg) stage.textContent = msg; });
     report.viewsCaptured = Object.keys(state.clips);
+    // Keyframes are frames of your video. The promise is that video never
+    // leaves the phone, so they are shown here and never sent to the server.
+    const { keyframes, ...stored } = report;
     const { error } = await supa.from("cycling_sessions").insert({
       user_id: user.id,
       cadence_rpm: report.cadence ?? null,
       views_captured: report.viewsCaptured,
-      report,
+      report: stored,
     });
     if (error) throw error;
     drawReport(view, report);
@@ -154,11 +157,18 @@ function drawReport(view, r) {
       <h2>${f.title}</h2><p>${f.line}</p>
       <p><strong>Try:</strong> ${f.cue}</p>
     </div>
+    ${r.keyframes?.length ? `
+      <div class="sect">What we measured on</div>
+      ${r.keyframes.map((k) => `
+        <figure class="keyframe glass">
+          <img src="${k.src}" alt="${k.label}">
+          <figcaption><span class="kf-label">${k.label}</span>${k.caption}</figcaption>
+        </figure>`).join("")}` : ""}
     <div class="sect">Measured</div>
     ${r.cards.map((c) => `
       <div class="glass card"><div class="row"><h3>${c.name}</h3>
         <div class="val">${c.value} ${c.verdict ? `<em>${c.verdict}</em>` : ""}</div></div>
         <p>${c.note}</p></div>`).join("")}
     <a class="btn" href="#/home">Done</a>`}
-  <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes · video never uploaded · front & behind views ship in the next update</div>`;
+  <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes · video and these frames never leave the phone · front & behind views ship in the next update</div>`;
 }

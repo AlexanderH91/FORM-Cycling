@@ -48,6 +48,68 @@ function findPeaks(sig, minDist, prominence) {
   return peaks.filter((p) => sig[p] - lo > prominence * (hi - lo));
 }
 
+// Palette shared with the FORM report shell. Verdict colour is only ever used
+// on the rider's own limb — never on a reference.
+const IN_BAND = "#34D27B", OUT_OF_BAND = "#F2C230";
+
+// The camera sees one side of the rider; take whichever is more visible.
+function pickSide(p) {
+  const L = (p[23].visibility ?? 1) + (p[25].visibility ?? 1) + (p[27].visibility ?? 1);
+  const R = (p[24].visibility ?? 1) + (p[26].visibility ?? 1) + (p[28].visibility ?? 1);
+  const [hip, knee, ankle, sho, heel, toe] =
+    L >= R ? [p[23], p[25], p[27], p[11], p[29], p[31]] : [p[24], p[26], p[28], p[12], p[30], p[32]];
+  return { hip, knee, ankle, sho, heel, toe };
+}
+
+// Every joint in `pts` must be visible in THIS frame — the caller checks that
+// before asking for a line. Solid = the rider's own body (line grammar).
+function limb(ctx, pts, colour, w, h) {
+  const lw = Math.max(3, w * 0.006);
+  ctx.lineWidth = lw; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  ctx.strokeStyle = colour;
+  ctx.beginPath();
+  pts.forEach((pt, i) => (i ? ctx.lineTo(pt.x * w, pt.y * h) : ctx.moveTo(pt.x * w, pt.y * h)));
+  ctx.stroke();
+  ctx.fillStyle = colour;
+  for (const pt of pts) { ctx.beginPath(); ctx.arc(pt.x * w, pt.y * h, lw * 1.15, 0, Math.PI * 2); ctx.fill(); }
+}
+
+// One label, at the joint it measures, no leader line.
+function tag(ctx, text, at, colour, w, h) {
+  const size = Math.max(15, w * 0.045);
+  ctx.font = `600 ${size}px "Barlow Condensed", "Arial Narrow", Arial, sans-serif`;
+  const tw = ctx.measureText(text).width, padX = size * 0.45, padY = size * 0.26;
+  const bw = tw + padX * 2, bh = size + padY * 2;
+  const bx = Math.min(Math.max(at.x * w + size * 0.55, 4), w - bw - 4);
+  const by = Math.min(Math.max(at.y * h - bh / 2, 4), h - bh - 4);
+  ctx.fillStyle = "rgba(11,11,11,.78)";
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, size * 0.34); else ctx.rect(bx, by, bw, bh);
+  ctx.fill();
+  ctx.fillStyle = colour;
+  ctx.fillText(text, bx + padX, by + size + padY * 0.05);
+}
+
+const SEEN = (pt) => (pt?.visibility ?? 1) > 0.5;
+
+/* Grab the frame a number actually came from and draw that number on it.
+   `draw` returns false when the joints it needs are not visible in this exact
+   frame — then the still is shown with nothing drawn rather than a guess. */
+async function keyframe(video, lm, t, draw, maxW = 720) {
+  video.currentTime = t;
+  await new Promise((res) => { video.onseeked = res; });
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return null;
+  const scale = Math.min(1, maxW / vw);
+  const c = document.createElement("canvas");
+  c.width = Math.round(vw * scale); c.height = Math.round(vh * scale);
+  const ctx = c.getContext("2d");
+  ctx.drawImage(video, 0, 0, c.width, c.height);
+  const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
+  const drawn = p ? draw(ctx, pickSide(p), c.width, c.height) !== false : false;
+  return { src: c.toDataURL("image/jpeg", 0.82), drawn };
+}
+
 export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   onProgress(3, "Loading the pose model onto your phone…");
   const lm = await getLandmarker();
@@ -72,12 +134,9 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     const res = lm.detectForVideo(video, performance.now());
     const p = res.landmarks?.[0];
     if (p) {
-      // choose camera-facing side by visibility (left 23/25/27 vs right 24/26/28)
-      const L = (p[23].visibility ?? 1) + (p[25].visibility ?? 1) + (p[27].visibility ?? 1);
-      const R = (p[24].visibility ?? 1) + (p[26].visibility ?? 1) + (p[28].visibility ?? 1);
-      const [hip, knee, ankle, sho, heel, toe] =
-        L >= R ? [p[23], p[25], p[27], p[11], p[29], p[31]] : [p[24], p[26], p[28], p[12], p[30], p[32]];
+      const { hip, knee, ankle, sho, heel, toe } = pickSide(p);
       rows.push({
+        t: times[i],                       // frames the model missed leave gaps; keep real time
         kneeBend: 180 - angleAt(hip, knee, ankle),
         hip: angleAt(sho, hip, knee),
         torso: deg(Math.atan2(Math.abs(sho.y - hip.y), Math.abs(sho.x - hip.x) + 1e-9)),
@@ -95,7 +154,9 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   const tdcIdx = findPeaks(ay.map((v) => -v), FPS * 0.45, 0.25);
   if (bdc.length < 5) { release(); return { gate: "We couldn't find steady pedaling in the part you selected. Move the trim to a section where you ride continuously." }; }
 
-  const cadence = 60 / (mean(bdc.slice(1).map((v, i) => v - bdc[i])) / FPS);
+  // Row indices skip any frame the model could not read, so measure the stroke
+  // period from the frames' own timestamps instead of assuming none were lost.
+  const cadence = 60 / mean(bdc.slice(1).map((v, i) => rows[v].t - rows[bdc[i]].t));
   const at = (idxs, key) => idxs.map((i) => rows[i][key]);
   const kneeBDC = { mean: mean(at(bdc, "kneeBend")), sd: sd(at(bdc, "kneeBend")) };
   const toeBDC = mean(at(bdc, "toeDown"));
@@ -116,9 +177,48 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   else
     fix = { title: "Position holds up — keep riding", line: `Knee ${kneeBDC.mean.toFixed(0)}° at the bottom, cadence ${cadence.toFixed(0)} rpm — the basics are in their bands.`, cue: "Film again in a month, or after any change to the bike." };
 
+  /* The picture has to be of the stroke the number describes, so show the one
+     closest to the average rather than an arbitrary or best-looking frame. */
+  onProgress(96, "Pulling the frames we measured on…");
+  const closestTo = (idxs, key, target) =>
+    idxs.reduce((best, i) => (Math.abs(rows[i][key] - target) < Math.abs(rows[best][key] - target) ? i : best), idxs[0]);
+
+  const keyframes = [];
+  try {
+    const bdcRow = closestTo(bdc, "kneeBend", kneeBDC.mean);
+    const bdcShot = await keyframe(video, lm, rows[bdcRow].t, (ctx, j, w, h) => {
+      if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
+      limb(ctx, [j.hip, j.knee, j.ankle], kneeVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
+      tag(ctx, `${rows[bdcRow].kneeBend.toFixed(0)}\u00b0`, j.knee, kneeVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
+    });
+    if (bdcShot) keyframes.push({
+      ...bdcShot, label: "Bottom of the stroke · 6 o'clock",
+      caption: bdcShot.drawn
+        ? `Knee ${rows[bdcRow].kneeBend.toFixed(0)}\u00b0 on this stroke — the average across all ${bdc.length} is ${kneeBDC.mean.toFixed(0)}\u00b0.`
+        : "We couldn't see hip, knee and ankle clearly enough in this frame to draw on it.",
+    });
+
+    if (hipTDC != null && tdcIdx.length) {
+      const tdcRow = closestTo(tdcIdx, "hip", hipTDC);
+      const hipOk = hipTDC >= BANDS.hipTDC[0] && hipTDC <= BANDS.hipTDC[1];
+      const tdcShot = await keyframe(video, lm, rows[tdcRow].t, (ctx, j, w, h) => {
+        if (!SEEN(j.sho) || !SEEN(j.hip) || !SEEN(j.knee)) return false;
+        limb(ctx, [j.sho, j.hip, j.knee], hipOk ? IN_BAND : OUT_OF_BAND, w, h);
+        tag(ctx, `${rows[tdcRow].hip.toFixed(0)}\u00b0`, j.hip, hipOk ? IN_BAND : OUT_OF_BAND, w, h);
+      });
+      if (tdcShot) keyframes.push({
+        ...tdcShot, label: "Top of the stroke",
+        caption: tdcShot.drawn
+          ? `Hip fold ${rows[tdcRow].hip.toFixed(0)}\u00b0 on this stroke — the average is ${hipTDC.toFixed(0)}\u00b0.`
+          : "We couldn't see shoulder, hip and knee clearly enough in this frame to draw on it.",
+      });
+    }
+  } catch { /* a report without stills still stands; the numbers are unaffected */ }
+
   onProgress(100);
   release();
   return {
+    keyframes,
     strokes: bdc.length,
     cadence,
     kneeBendBDC: { mean: +kneeBDC.mean.toFixed(1), sd: +kneeBDC.sd.toFixed(1) },
