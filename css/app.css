@@ -113,27 +113,39 @@ label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform
 
 /* centre action */
 .nav a.cta{gap:0;color:var(--ink)}
+/* On the gold disc the gold IS the ground, so the burst drops out and the arc
+   and cog go black. The cog's hub is a punched hole, so gold shows through. */
 .nav a.cta .disc{
-  width:60px;height:60px;border-radius:50%;background:#16150F;color:var(--ink);
-  border:1.5px solid var(--gold);
+  width:60px;height:60px;border-radius:50%;background:var(--gold);
+  color:#0B0B0B;--burst:transparent;--cog:#0B0B0B;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
-  box-shadow:0 8px 22px rgba(242,194,48,.22);
+  box-shadow:0 8px 22px rgba(242,194,48,.28);
 }
 .nav a.cta .mark{width:27px;height:27px;margin-top:2px}
 .disclbl{font-family:var(--display);font-weight:700;font-size:10px;letter-spacing:.1em;
-  text-transform:uppercase;color:var(--gold);line-height:1}
-.nav a.cta.on .disc{outline:2px solid rgba(242,194,48,.35);outline-offset:3px}
+  text-transform:uppercase;color:#0B0B0B;line-height:1}
+.nav a.cta.on .disc{outline:2px solid rgba(242,194,48,.45);outline-offset:3px}
 .nav a.cta.on{color:var(--gold)}
 .nav a.cta::after{display:none}
 
-/* the mark keeps its own colours everywhere: ink arc, gold burst */
+/* the mark keeps its own colours everywhere: ink arc, gold burst.
+   .mark sets colour on itself, so gold-ground surfaces must override it here
+   rather than relying on inheritance from the parent. */
 .mark{color:var(--ink)}
+.nav a.cta .mark{color:#0B0B0B}
 
 /* brand lockup in the app bar */
 .brand{display:flex;align-items:center;gap:8px}
 .brand .mark{width:24px;height:24px;color:var(--ink);flex:none}
 .brand .wordmark{letter-spacing:.02em}
 .brand .sport{color:var(--gold)}
+
+/* capture — one screen, one card per view */
+.slot .preview{margin-top:10px}
+.slot .trim{margin-top:10px}
+.slot-actions{display:flex;gap:8px;margin-top:12px}
+.slot-actions .btn{margin-top:0}
+.btn.small{font-size:15px;min-height:46px;padding:12px 10px;border-radius:14px;letter-spacing:.03em}
 
 /* capture flow */
 .steps{display:flex;gap:6px;margin:6px 0 14px}
