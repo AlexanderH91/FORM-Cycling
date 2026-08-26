@@ -18,7 +18,9 @@ body{
   min-height:100dvh;
 }
 .app{max-width:480px;margin:0 auto;min-height:100dvh;display:flex;flex-direction:column}
-.view{flex:1;padding:18px 16px calc(96px + env(safe-area-inset-bottom))}
+/* --nav-h is measured from the real nav in main.js; the fallback matches its
+   default height so the page is never wrong before the first measurement. */
+.view{flex:1;padding:18px 16px calc(var(--nav-h, 66px) + 34px + env(safe-area-inset-bottom))}
 .hidden{display:none!important}
 
 /* glass */

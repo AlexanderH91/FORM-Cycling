@@ -54,8 +54,11 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
 
   const video = document.createElement("video");
   video.muted = true; video.playsInline = true;
-  video.src = URL.createObjectURL(blob);
-  await new Promise((res, rej) => { video.onloadedmetadata = res; video.onerror = () => rej(new Error("could not read the video")); });
+  const srcUrl = URL.createObjectURL(blob);
+  video.src = srcUrl;
+  const release = () => { video.src = ""; URL.revokeObjectURL(srcUrl); };
+  await new Promise((res, rej) => { video.onloadedmetadata = res; video.onerror = () => rej(new Error("could not read the video")); })
+    .catch((e) => { release(); throw e; });
 
   const FPS = 15, span = Math.min(t1 - t0, 60);           // analyze ≤60 s of the trim
   const times = [];
@@ -84,13 +87,13 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     }
     onProgress(8 + (82 * i) / times.length);
   }
-  if (rows.length < FPS * 5) return { gate: "We couldn't see you clearly for long enough. Check the framing — whole bike and rider, decent light — and film again." };
+  if (rows.length < FPS * 5) { release(); return { gate: "We couldn't see you clearly for long enough. Check the framing — whole bike and rider, decent light — and film again." }; }
 
   onProgress(92, "Averaging across strokes…");
   const ay = rows.map((r) => r.ankleY);
   const bdc = findPeaks(ay, FPS * 0.45, 0.25);
   const tdcIdx = findPeaks(ay.map((v) => -v), FPS * 0.45, 0.25);
-  if (bdc.length < 5) return { gate: "We couldn't find steady pedaling in the part you selected. Move the trim to a section where you ride continuously." };
+  if (bdc.length < 5) { release(); return { gate: "We couldn't find steady pedaling in the part you selected. Move the trim to a section where you ride continuously." }; }
 
   const cadence = 60 / (mean(bdc.slice(1).map((v, i) => v - bdc[i])) / FPS);
   const at = (idxs, key) => idxs.map((i) => rows[i][key]);
@@ -114,6 +117,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     fix = { title: "Position holds up — keep riding", line: `Knee ${kneeBDC.mean.toFixed(0)}° at the bottom, cadence ${cadence.toFixed(0)} rpm — the basics are in their bands.`, cue: "Film again in a month, or after any change to the bike." };
 
   onProgress(100);
+  release();
   return {
     strokes: bdc.length,
     cadence,

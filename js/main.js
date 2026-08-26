@@ -19,19 +19,48 @@ const routes = {
 
 export function go(r) { location.hash = "#/" + r; }
 
+// The floating nav overlaps the page, so the view has to reserve its real
+// height — which changes with the phone's text size. Measure it, don't guess.
+function syncNavHeight() {
+  document.documentElement.style.setProperty("--nav-h", nav.offsetHeight + "px");
+}
+if (typeof ResizeObserver !== "undefined") new ResizeObserver(syncNavHeight).observe(nav);
+addEventListener("resize", syncNavHeight);
+syncNavHeight();
+
+// Renders are async, so a second route() starting mid-flight would paint over
+// the first. Only the newest one is allowed to finish.
+let routeSeq = 0;
+let lastUserId;
+
 async function route() {
+  const seq = ++routeSeq;
   const r = (location.hash.replace(/^#\//, "") || "home").split("?")[0];
   const def = routes[r] ?? routes.home;
   const user = await currentUser();
+  if (seq !== routeSeq) return;
+  lastUserId = user?.id ?? null;
   if (def.auth && !user) { location.hash = "#/login"; return; }
   if (!def.auth && user) { location.hash = "#/home"; return; }
   nav.classList.toggle("hidden", !def.nav);
   nav.querySelectorAll("a").forEach(a => a.classList.toggle("on", a.dataset.r === r));
   view.innerHTML = "";
   await def.render(view, user);
+  if (seq !== routeSeq) return;
+  syncNavHeight();
   view.scrollTop = 0; window.scrollTo(0, 0);
 }
 
 window.addEventListener("hashchange", route);
-supa.auth.onAuthStateChange(() => route());
+
+// Supabase fires this for token refreshes and user-metadata updates too, not
+// just sign-in/out. Re-rendering on those threw away whatever the page was
+// holding — mid-capture that meant losing the clips you had just filmed. Only
+// an actual change of who is signed in is a navigation.
+supa.auth.onAuthStateChange((_event, session) => {
+  const id = session?.user?.id ?? null;
+  if (id === lastUserId) return;
+  route();
+});
+
 route();

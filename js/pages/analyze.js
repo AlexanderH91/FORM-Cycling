@@ -48,14 +48,21 @@ function drawStep(view, user, state) {
   const prev = $("#prev");
   let recorder = null, recTimer = null;
 
+  let previewUrl = null;
   function loadClip(blob) {
     state.clips[s.key] = blob;
-    prev.src = URL.createObjectURL(blob);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);   // a 10-minute clip is not small
+    previewUrl = URL.createObjectURL(blob);
+    prev.src = previewUrl;
     prev.classList.remove("hidden");
     $("#trim").classList.remove("hidden");
     $("#next").classList.remove("hidden");
     prev.onloadedmetadata = () => syncTrim(prev, $, state, s.key);
   }
+
+  // Coming back to a step you already filmed used to show an empty player, as
+  // if the clip were gone. It isn't — put it back on screen.
+  if (state.clips[s.key]) loadClip(state.clips[s.key]);
 
   $("#pick").onclick = () => $("#file").click();
   $("#file").onchange = (e) => e.target.files[0] && loadClip(e.target.files[0]);
