@@ -1,5 +1,6 @@
 import { supa } from "../supa.js";
 import { OTP_LENGTH } from "../config.js";
+import { appbar } from "../ui.js";
 
 const RESEND_COOLDOWN_S = 60;
 // Supabase allows an OTP of 6–10 digits. OTP_LENGTH is what this project is set
@@ -11,7 +12,7 @@ const A_CODE = `${CODE_LENGTH === 8 ? "an" : "a"} ${CODE_LENGTH}-digit`;
 
 export function renderLogin(view) {
   view.innerHTML = `
-  <div class="appbar"><div class="brand">FORM <span>Cycling</span></div></div>
+  ${appbar()}
   <h1>One camera.<br>One honest fix.</h1>
   <p>Film yourself on your trainer with the phone you already own. FORM measures how you sit and pedal — averaged over every stroke — and coaches one change at a time. Same account as FORM Golf.</p>
 

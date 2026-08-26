@@ -1,4 +1,5 @@
 import { supa } from "../supa.js";
+import { appbar } from "../ui.js";
 
 export async function renderProfile(view, user) {
   const { data: rows } = await supa.from("cycling_sessions")
@@ -7,7 +8,7 @@ export async function renderProfile(view, user) {
   const height = rows?.[0]?.rider_height_cm ?? "";
 
   view.innerHTML = `
-  <div class="appbar"><div class="brand">FORM <span>Cycling</span></div></div>
+  ${appbar()}
   <h1>Profile</h1>
   <div class="glass card">
     <h3>Account</h3>

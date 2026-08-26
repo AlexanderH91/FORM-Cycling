@@ -2,6 +2,7 @@ import { supa } from "../supa.js";
 import { MAX_RECORD_MS } from "../config.js";
 import { analyzeSideClip } from "../analysis.js";
 import { go } from "../main.js";
+import { appbar } from "../ui.js";
 
 /* Guided capture: side → front → behind. Each step: record with the phone
    camera (max 10 min) or pick a file, then trim to the steady-pedaling part.
@@ -22,8 +23,7 @@ export function renderAnalyze(view, user) {
 function drawStep(view, user, state) {
   const s = STEPS[state.step];
   view.innerHTML = `
-  <div class="appbar"><div class="brand">FORM <span>Cycling</span></div>
-    <div class="meta">capture ${state.step + 1}/3</div></div>
+  ${appbar(`capture ${state.step + 1}/3`)}
   <div class="steps">${STEPS.map((_, i) =>
     `<i class="${i < state.step ? "done" : ""}"></i>`).join("")}</div>
   <h1>${s.title}</h1>
@@ -114,7 +114,7 @@ function syncTrim(video, $, state, key) {
 
 async function runAnalysis(view, user, state) {
   view.innerHTML = `
-  <div class="appbar"><div class="brand">FORM <span>Cycling</span></div></div>
+  ${appbar()}
   <h1>Analyzing…</h1>
   <p id="stage">Loading the pose model onto your phone…</p>
   <div class="progress"><i id="bar"></i></div>
@@ -145,8 +145,7 @@ async function runAnalysis(view, user, state) {
 function drawReport(view, r) {
   const f = r.fix;
   view.innerHTML = `
-  <div class="appbar"><div class="brand">FORM <span>Cycling</span></div>
-    <div class="meta">new report</div></div>
+  ${appbar("new report")}
   ${r.gate ? `
     <div class="glass card"><h3>We couldn't trust this read</h3>
       <p>${r.gate}</p></div>

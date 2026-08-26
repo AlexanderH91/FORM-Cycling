@@ -1,5 +1,6 @@
 import { supa } from "../supa.js";
 import { BANDS } from "../config.js";
+import { appbar } from "../ui.js";
 
 export async function renderHome(view, user) {
   const { data: sessions } = await supa
@@ -12,10 +13,7 @@ export async function renderHome(view, user) {
   const knee = (s) => s?.report?.kneeBendBDC?.mean;
 
   view.innerHTML = `
-  <div class="appbar">
-    <div class="brand">FORM <span>Cycling</span></div>
-    <div class="meta">${new Date().toLocaleDateString(undefined,{day:"numeric",month:"short"})}</div>
-  </div>
+  ${appbar(new Date().toLocaleDateString(undefined,{day:"numeric",month:"short"}))}
   ${latest ? `
     <h1>Your riding, over time</h1>
     <div class="glass card">

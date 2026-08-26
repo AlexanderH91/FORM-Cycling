@@ -43,7 +43,7 @@ p strong{color:var(--ink)}
 /* header */
 .appbar{display:flex;justify-content:space-between;align-items:baseline;padding:14px 2px 12px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:14px}
 .brand{font-family:var(--display);font-weight:700;text-transform:uppercase;font-size:20px;letter-spacing:.04em}
-.brand span{color:var(--gold)}
+.brand span{color:inherit}
 .appbar .meta{font-family:var(--mono);font-size:11px;color:var(--muted);letter-spacing:.08em;text-transform:uppercase}
 
 /* buttons */
@@ -67,6 +67,8 @@ input::placeholder{color:#6f6d68}
 label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);display:block;margin:8px 0 6px}
 .err{color:#E0603A;font-size:14px;min-height:20px;margin:4px 0}
 .ok{color:var(--gold);font-size:14px;min-height:20px;margin:4px 0}
+/* an empty slot should not hold open a gap the reader reads as a missing element */
+.err:empty,.ok:empty{min-height:0;margin:0}
 
 /* cards */
 .card{padding:16px;margin-bottom:10px}
@@ -82,28 +84,57 @@ label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform
 .kf-label{display:block;font-family:var(--mono);font-size:11px;letter-spacing:.14em;
   text-transform:uppercase;color:var(--gold);margin-bottom:4px}
 
-/* bottom nav */
+/* bottom nav — shared FORM shell: icon rail either side of a raised disc */
 .nav{
-  position:fixed;left:50%;transform:translateX(-50%);bottom:calc(10px + env(safe-area-inset-bottom));
-  width:min(456px, calc(100% - 20px));
-  display:flex;align-items:center;justify-content:space-between;
-  background:rgba(20,19,16,.75);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
-  border:1px solid var(--glassline);border-radius:24px;padding:8px 10px;
-  box-shadow:0 12px 32px rgba(0,0,0,.5);
+  position:fixed;left:0;right:0;bottom:0;
+  background:rgba(11,11,11,.88);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);
+  border-top:1px solid var(--glassline);
+  padding:8px 6px calc(10px + env(safe-area-inset-bottom));
 }
+.navrow{max-width:480px;margin:0 auto;display:flex;align-items:flex-end;justify-content:space-between}
 .nav a{
-  flex:1;text-align:center;text-decoration:none;color:var(--muted);
-  font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
-  padding:6px 0;border-radius:14px;min-height:44px;display:flex;flex-direction:column;justify-content:center;gap:2px;
+  flex:1;position:relative;display:flex;flex-direction:column;align-items:center;gap:5px;
+  text-decoration:none;color:var(--muted);min-height:44px;padding:6px 0 2px;
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
 }
-.nav a .nico{font-size:16px;line-height:1}
+.nav a .nico{width:24px;height:24px;fill:none;stroke:currentColor;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round}
 .nav a.on{color:var(--gold)}
-.nav a.cta{
-  flex:1.3;background:var(--gold);color:#0B0B0B;font-family:var(--display);
-  font-weight:700;font-size:14px;line-height:1.05;letter-spacing:.04em;border-radius:18px;
-  padding:9px 0;margin:0 4px;
+.nav a::after{content:"";width:4px;height:4px;margin-top:2px;border-radius:50%}  /* reserved so labels share a baseline */
+.nav a.on::after{background:var(--gold)}
+
+/* locked destinations say so on the nav rather than failing silently */
+.soon{
+  position:absolute;top:-1px;left:calc(50% + 7px);font-style:normal;
+  font-size:7px;letter-spacing:.06em;line-height:1.4;
+  color:var(--gold);background:rgba(242,194,48,.12);border:1px solid rgba(242,194,48,.42);
+  border-radius:6px;padding:0 3px;pointer-events:none;
 }
-.nav a.cta.on{outline:2px solid rgba(242,194,48,.4)}
+
+/* centre action */
+.nav a.cta{gap:0;color:var(--ink)}
+.nav a.cta .disc{
+  width:60px;height:60px;border-radius:50%;background:var(--gold);color:#0B0B0B;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+  box-shadow:0 8px 22px rgba(242,194,48,.28);
+}
+.nav a.cta .mark{width:27px;height:27px;margin-top:2px}
+.disclbl{font-family:var(--display);font-weight:700;font-size:10px;letter-spacing:.1em;
+  text-transform:uppercase;color:#0B0B0B;line-height:1}
+.nav a.cta.on .disc{outline:2px solid rgba(242,194,48,.35);outline-offset:3px}
+.nav a.cta.on{color:var(--gold)}
+.nav a.cta::after{display:none}
+
+/* the mark: gold arc, white crank — inherits colour when used on the gold disc */
+.mark .crank{stroke:var(--crank, #F4F3EF)}
+.nav a.cta .mark{color:#0B0B0B}
+.nav a.cta .mark .crank{stroke:#0B0B0B}
+
+/* brand lockup in the app bar */
+.brand{display:flex;align-items:center;gap:8px}
+.brand .mark{width:22px;height:22px;color:var(--gold);flex:none}
+.brand .wordmark{letter-spacing:.02em}
+.brand .sport{color:var(--gold)}
 
 /* capture flow */
 .steps{display:flex;gap:6px;margin:6px 0 14px}

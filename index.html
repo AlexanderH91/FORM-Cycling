@@ -15,11 +15,31 @@
 <div id="app" class="app">
   <main id="view" class="view"></main>
   <nav id="nav" class="nav hidden">
-    <a href="#/home" data-r="home"><span class="nico">⌂</span>Home</a>
-    <a href="#/journey" data-r="journey"><span class="nico">◈</span>Journey</a>
-    <a href="#/analyze" class="cta" data-r="analyze">FORM<br>Cycling</a>
-    <a href="#/drills" data-r="drills"><span class="nico">◎</span>Drills</a>
-    <a href="#/profile" data-r="profile"><span class="nico">●</span>Profile</a>
+   <div class="navrow">
+    <a href="#/home" data-r="home">
+      <svg class="nico" viewBox="0 0 24 24"><path d="M3.5 10.5 12 4l8.5 6.5V20a1 1 0 0 1-1 1h-4v-6h-7v6h-4a1 1 0 0 1-1-1z"/></svg>
+      <span>Home</span></a>
+
+    <a href="#/journey" data-r="journey">
+      <svg class="nico" viewBox="0 0 24 24"><path d="M6 21V4"/><path d="M6 4.5h10.5L14 8.5l2.5 4H6"/></svg>
+      <span>Journey</span><i class="soon">Soon</i></a>
+
+    <a href="#/analyze" class="cta" data-r="analyze">
+      <span class="disc"><svg class="mark" viewBox="0 0 48 48" aria-hidden="true">
+        <path d="M6 40C8 21 17 10 31 10" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/>
+        <g class="crank" fill="none" stroke-linecap="round">
+          <circle cx="31" cy="10" r="5.5" stroke-width="3"/>
+          <path d="M34.9 13.9 L43 22" stroke-width="4"/>
+        </g></svg><span class="disclbl">FORM</span></span></a>
+
+    <a href="#/drills" data-r="drills">
+      <svg class="nico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="2.6"/></svg>
+      <span>Drills</span><i class="soon">Soon</i></a>
+
+    <a href="#/profile" data-r="profile">
+      <svg class="nico" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>
+      <span>Me</span></a>
+   </div>
   </nav>
 </div>
 <script type="module" src="js/main.js"></script>
