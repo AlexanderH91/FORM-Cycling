@@ -25,7 +25,14 @@ async function getLandmarker() {
 }
 
 const deg = (r) => (r * 180) / Math.PI;
-function angleAt(a, b, c) {
+
+/* MediaPipe normalises x by frame WIDTH and y by frame HEIGHT, so on any
+   non-square clip the two axes are in different units and every angle taken
+   straight from them is wrong — by 10-16 degrees on a 16:9 phone video, which
+   is wider than the bands themselves. Put x back into y's units first. */
+export const squareUp = (ar) => (p) => ({ x: p.x * ar, y: p.y });
+
+export function angleAt(a, b, c) {
   const v1 = [a.x - b.x, a.y - b.y], v2 = [c.x - b.x, c.y - b.y];
   const dot = v1[0] * v2[0] + v1[1] * v2[1];
   const n = Math.hypot(...v1) * Math.hypot(...v2) + 1e-9;
@@ -122,6 +129,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   await new Promise((res, rej) => { video.onloadedmetadata = res; video.onerror = () => rej(new Error("could not read the video")); })
     .catch((e) => { release(); throw e; });
 
+  const sq = squareUp((video.videoWidth || 1) / (video.videoHeight || 1));
+
   const FPS = 15, span = Math.min(t1 - t0, 60);           // analyze ≤60 s of the trim
   const times = [];
   for (let t = t0; t < t0 + span; t += 1 / FPS) times.push(t);
@@ -134,14 +143,16 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     const res = lm.detectForVideo(video, performance.now());
     const p = res.landmarks?.[0];
     if (p) {
-      const { hip, knee, ankle, sho, heel, toe } = pickSide(p);
+      const raw = pickSide(p);
+      const hip = sq(raw.hip), knee = sq(raw.knee), ankle = sq(raw.ankle);
+      const sho = sq(raw.sho), heel = sq(raw.heel), toe = sq(raw.toe);
       rows.push({
         t: times[i],                       // frames the model missed leave gaps; keep real time
         kneeBend: 180 - angleAt(hip, knee, ankle),
         hip: angleAt(sho, hip, knee),
         torso: deg(Math.atan2(Math.abs(sho.y - hip.y), Math.abs(sho.x - hip.x) + 1e-9)),
         toeDown: -deg(Math.atan2(heel.y - toe.y, Math.abs(toe.x - heel.x) + 1e-9)),
-        ankleY: ankle.y,
+        ankleY: ankle.y,                   // y only — unaffected by the x correction
       });
     }
     onProgress(8 + (82 * i) / times.length);
