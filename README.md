@@ -13,6 +13,13 @@ Sister app to FORM Golf; same account, same honesty rules.
   Code length lives in `OTP_LENGTH` (`js/config.js`) and must match the dashboard setting.
   Cycling data lives in `public.cycling_sessions` (RLS: users see only their own rows).
   Config in `js/config.js` (publishable key only — safe to commit).
+- **Voice coach: OpenAI Realtime** — `js/pages/coach.js` opens a WebRTC session
+  straight to OpenAI, so audio never passes through our servers. The key never
+  reaches the browser: `supabase/functions/coach-token` holds it and returns a
+  client secret that lasts about a minute, and only to a signed-in rider. The
+  coach is instructed server-side that it may choose its words but never a
+  measurement — every figure it says comes from the stored report. With no key
+  set it falls back to the browser's own speech synthesis and says so.
 - **Analysis runs on-device** — MediaPipe Pose Landmarker (WASM) in the browser
   (`js/analysis.js`). Videos never leave the phone; only measurement results are stored.
 - **Pages**: Login (+ filming intro) · Home (development over time) · Analyze
@@ -44,6 +51,19 @@ cadence 75–95 rpm (TrainerRoad research review) · aero trade-offs (Fintelman 
    in `js/config.js`. They only drive copy and auto-submit — any code of 6+ digits can
    still be submitted by hand, and Supabase is the one that accepts or rejects it.
 
+## Voice coach setup (one secret, set once)
+
+The Edge Function is deployed. It needs the key, which must never be committed:
+
+```
+supabase secrets set OPENAI_API_KEY=sk-...   # or Dashboard → Edge Functions → coach-token → Secrets
+```
+
+Optional: `COACH_MODEL` (default `gpt-realtime`) and `COACH_VOICE` (default `verse`).
+
+Until that secret exists the function answers 503 and the app falls back to the
+preview voice, naming the reason on screen. Nothing breaks; it just isn't live.
+
 ## Roadmap (from the Ride Report 001 prototype + tester feedback, in order)
 
 - **Two-position protocol ("position ladder")** — tester-validated: real fits measure
@@ -55,9 +75,6 @@ cadence 75–95 rpm (TrainerRoad research review) · aero trade-offs (Fintelman 
 - **Stem & spacer recommendations** — not measured as parts, but translated from body
   measurements ("reach 2 cm long → try a 10–20 mm shorter stem; hands low + neck
   strained → add a spacer"). Recommendations, clearly framed as such.
-- Front + rear view analysis in the browser (knee plumb-line swing; shoulder rock;
-  pelvis via fabric tracking) — Python reference implementations live in the
-  prototype session (`analyze.py`, `rear_rescue.py`, `media_v3b.py`).
 - Report media: annotated keyframes + master video with Side/Front/Behind toggle
   and playback-speed control (see Ride Report 001 artifact for the target design).
 - Slow-motion (60 fps+) foot close-up → cleat fore-aft (tester-requested) + true knee-over-spindle.

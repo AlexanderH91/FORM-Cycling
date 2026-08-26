@@ -18,3 +18,8 @@ export const MAX_RECORD_MS = 10 * 60 * 1000; // 10 minutes
 // for its copy and for auto-submitting once the code is complete; a code of any
 // length from 6 up can still be submitted by hand, and the server is the judge.
 export const OTP_LENGTH = 8;
+
+// Voice coach. The OpenAI key never lives here — this endpoint is an Edge
+// Function that holds it and returns a client secret good for about a minute.
+// Set it there once:  supabase secrets set OPENAI_API_KEY=sk-...
+export const COACH_TOKEN_ENDPOINT = `${SUPABASE_URL}/functions/v1/coach-token`;
