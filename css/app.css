@@ -140,12 +140,41 @@ label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform
 .brand .wordmark{letter-spacing:.02em}
 .brand .sport{color:var(--gold)}
 
-/* capture — one screen, one card per view */
-.slot .preview{margin-top:10px}
-.slot .trim{margin-top:10px}
-.slot-actions{display:flex;gap:8px;margin-top:12px}
-.slot-actions .btn{margin-top:0}
-.btn.small{font-size:15px;min-height:46px;padding:12px 10px;border-radius:14px;letter-spacing:.03em}
+/* capture — one live session: lens, angle picker, shutter */
+/* The whole session — lens, angles, shutter, analyze — has to fit one screen
+   without scrolling, so the lens takes what is left rather than a fixed ratio. */
+.stage{position:relative;padding:0;overflow:hidden;border-radius:20px;background:#000;
+  aspect-ratio:4/3;max-height:38dvh;display:flex;align-items:center;justify-content:center}
+.shot{width:100%;height:100%;object-fit:cover;display:block;background:#000}
+.stage-msg{position:absolute;inset:auto 16px;text-align:center;color:var(--muted);font-size:14px}
+.rec-pill{position:absolute;top:12px;left:12px;display:flex;align-items:center;gap:2px;
+  background:rgba(11,11,11,.7);border-radius:999px;padding:5px 11px 5px 9px;
+  font-family:var(--mono);font-size:12px;letter-spacing:.06em}
+.hint{margin:10px 2px;font-size:14px}
+
+.angles{display:flex;gap:8px;margin-bottom:10px}
+.angle{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;
+  background:var(--glassbg);border:1px solid var(--glassline);border-radius:14px;
+  padding:10px 6px;min-height:56px;color:var(--muted);font-family:var(--display);
+  font-weight:600;text-transform:uppercase;letter-spacing:.05em;font-size:15px}
+.angle .astate{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;font-style:normal;
+  text-transform:uppercase;color:var(--muted)}
+.angle.filled{color:var(--ink)}
+.angle.filled .astate{color:var(--gold)}
+.angle.on{border-color:var(--gold);color:var(--ink);background:rgba(242,194,48,.10)}
+.angle:disabled{opacity:.4}
+
+.capture-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 6px}
+.shutter{width:68px;height:68px;flex:none;border-radius:50%;cursor:pointer;
+  background:transparent;border:3px solid var(--ink);display:grid;place-items:center;padding:0}
+.shutter i{width:53px;height:53px;border-radius:50%;background:var(--gold);display:block;
+  transition:border-radius .15s,width .15s,height .15s}
+.shutter.recording i{width:30px;height:30px;border-radius:8px;background:#E0603A}
+.shutter:disabled{opacity:.4}
+.ghost{flex:1;background:none;border:none;cursor:pointer;color:var(--muted);
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  padding:12px 4px;min-height:44px}
+.ghost:disabled{opacity:.35}
 
 /* capture flow */
 .steps{display:flex;gap:6px;margin:6px 0 14px}

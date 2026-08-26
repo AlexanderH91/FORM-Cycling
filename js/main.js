@@ -32,6 +32,7 @@ syncNavHeight();
 // the first. Only the newest one is allowed to finish.
 let routeSeq = 0;
 let lastUserId;
+let disposePage = null;
 
 async function route() {
   const seq = ++routeSeq;
@@ -44,9 +45,12 @@ async function route() {
   if (!def.auth && user) { location.hash = "#/home"; return; }
   nav.classList.toggle("hidden", !def.nav);
   nav.querySelectorAll("a").forEach(a => a.classList.toggle("on", a.dataset.r === r));
+  if (disposePage) { try { disposePage(); } catch { /* a failed teardown must not block the next page */ } disposePage = null; }
   view.innerHTML = "";
-  await def.render(view, user);
-  if (seq !== routeSeq) return;
+  // A page may return a teardown function — the capture screen holds the camera.
+  const dispose = await def.render(view, user);
+  if (seq !== routeSeq) { try { dispose?.(); } catch {} return; }
+  disposePage = typeof dispose === "function" ? dispose : null;
   syncNavHeight();
   view.scrollTop = 0; window.scrollTo(0, 0);
 }

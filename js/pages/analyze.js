@@ -4,158 +4,228 @@ import { analyzeSideClip } from "../analysis.js";
 import { go } from "../main.js";
 import { appbar } from "../ui.js";
 
-/* Capture lives on one screen. Three slots — side, front, behind — each with
-   its own player and trim, all visible at once. Only the side view is measured
-   in v1; the others are recorded against the session for later. Filming and
-   analysis both happen on the phone; the video never leaves it. */
+/* One recording session. The camera opens on arrival and stays open; you pick
+   which angle the next take belongs to from inside it, in any order, and take
+   as many as you like. Tapping an angle you have already filmed reviews and
+   trims it in place. Only the side view is measured in v1. Nothing leaves the
+   phone — the camera is released the moment you navigate away. */
 
 const VIEWS = [
-  { key: "side",  title: "Side view",   need: "Required",
-    hint: "Phone at saddle height, 2–3 m away, whole bike and rider in frame. This is the view we measure." },
-  { key: "front", title: "Front view",  need: "Optional",
-    hint: "Bar height, straight ahead, both knees visible." },
-  { key: "rear",  title: "From behind", need: "Optional",
+  { key: "side",  label: "Side",   need: "required",
+    hint: "Phone at saddle height, 2–3 m away — whole bike and rider in frame. This is the view we measure." },
+  { key: "front", label: "Front",  need: "optional",
+    hint: "Phone at bar height, straight ahead — both knees visible." },
+  { key: "rear",  label: "Behind", need: "optional",
     hint: "Behind the rear wheel, light from the side — never a window straight behind you." },
 ];
 
 const clock = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, "0")}`;
+const viewOf = (k) => VIEWS.find((v) => v.key === k);
 
 export function renderAnalyze(view, user) {
-  drawCapture(view, user, { clips: {}, trims: {}, urls: {} });
+  const state = { angle: "side", clips: {}, trims: {}, urls: {},
+                  stream: null, recorder: null, timer: null, tick: null };
+  drawCapture(view, user, state);
+  return () => teardown(state);       // the router calls this when you leave
+}
+
+function stopCamera(state) {
+  if (state.recorder && state.recorder.state !== "inactive") { try { state.recorder.stop(); } catch {} }
+  clearTimeout(state.timer); clearInterval(state.tick);
+  state.recorder = null;
+  state.stream?.getTracks().forEach((t) => t.stop());
+  state.stream = null;
+}
+
+function teardown(state) {
+  stopCamera(state);
+  for (const k of Object.keys(state.urls)) URL.revokeObjectURL(state.urls[k]);
+  state.urls = {};
 }
 
 function drawCapture(view, user, state) {
   view.innerHTML = `
   ${appbar("capture")}
-  <h1>Film your ride</h1>
-  <p>All three angles live on this screen — fill them in any order. Only the side
-     view is measured today; front and behind are saved with the session and get
-     their own analysis in a later update.</p>
-  <div id="slots"></div>
+  <div class="stage glass">
+    <video id="cam" class="shot" playsinline muted autoplay></video>
+    <video id="play" class="shot hidden" playsinline muted loop controls></video>
+    <div class="stage-msg hidden" id="stagemsg"></div>
+    <div class="rec-pill hidden" id="recpill"><span class="rec-dot"></span><span id="rectime">0:00</span></div>
+  </div>
+  <p class="hint" id="hint"></p>
+  <div class="angles" id="angles">
+    ${VIEWS.map((v) => `<button class="angle" data-a="${v.key}">
+        <span class="alabel">${v.label}</span><em class="astate">${v.need}</em></button>`).join("")}
+  </div>
+  <div class="trim hidden" id="trim">
+    <div class="lbl"><span>Analyze from</span><span id="t0l">0:00</span></div>
+    <input id="t0" type="range" min="0" max="100" value="0">
+    <div class="lbl"><span>to</span><span id="t1l">0:00</span></div>
+    <input id="t1" type="range" min="0" max="100" value="100">
+  </div>
+  <div class="capture-bar">
+    <button class="ghost" id="import">Import a video</button>
+    <button class="shutter" id="shoot" aria-label="Record"><i></i></button>
+    <button class="ghost" id="retake" disabled>Retake</button>
+    <input type="file" accept="video/*" class="hidden" id="file">
+  </div>
   <div class="err" id="err"></div>
   <button class="btn" id="go" disabled></button>
-  <div class="footnote">Filming happens on your phone and the video stays there · recording stops on its own after ${Math.round(MAX_RECORD_MS / 60000)} minutes</div>`;
+  <div class="footnote">Filming and analysis both happen on your phone · recording stops on its own after ${Math.round(MAX_RECORD_MS / 60000)} minutes</div>`;
 
-  const err = view.querySelector("#err");
-  const goBtn = view.querySelector("#go");
-  let recording = null;   // one camera, one recording at a time
+  const $ = (q) => view.querySelector(q);
+  const cam = $("#cam"), play = $("#play"), err = $("#err"), goBtn = $("#go");
+  const shoot = $("#shoot"), retake = $("#retake"), trim = $("#trim");
 
-  const refreshGo = () => {
+  const isRecording = () => !!state.recorder && state.recorder.state === "recording";
+
+  function paint() {
+    const v = viewOf(state.angle);
+    const clip = state.clips[state.angle];
+    $("#hint").textContent = v.hint;
+
+    for (const btn of view.querySelectorAll(".angle")) {
+      const k = btn.dataset.a;
+      btn.classList.toggle("on", k === state.angle);
+      btn.classList.toggle("filled", !!state.clips[k]);
+      btn.disabled = isRecording() && k !== state.angle;
+      const t = state.trims[k];
+      btn.querySelector(".astate").textContent =
+        state.clips[k] ? (t ? clock(t[1] - t[0]) : "…") : viewOf(k).need;
+    }
+
+    // Reviewing a take you already have, or looking through the lens.
+    const reviewing = !!clip && !isRecording();
+    play.classList.toggle("hidden", !reviewing);
+    cam.classList.toggle("hidden", reviewing);
+    trim.classList.toggle("hidden", !reviewing);
+    retake.disabled = !clip || isRecording();
+    shoot.classList.toggle("recording", isRecording());
+    shoot.setAttribute("aria-label", isRecording() ? "Stop recording" : "Record");
+
     const ready = state.clips.side && state.trims.side;
-    goBtn.disabled = !ready || !!recording;
-    goBtn.textContent = ready ? "Analyze this ride →" : "Add the side view to analyze";
-  };
-
-  const ctx = {
-    err, refreshGo,
-    getRec: () => recording,
-    setRec: (r) => { recording = r; refreshGo(); },
-  };
-
-  const slots = view.querySelector("#slots");
-  for (const v of VIEWS) slots.appendChild(buildSlot(v, state, ctx));
-  refreshGo();
-
-  goBtn.onclick = () => { if (!goBtn.disabled) runAnalysis(view, user, state); };
-}
-
-function buildSlot(v, state, ctx) {
-  const card = document.createElement("div");
-  card.className = "glass card slot";
-  card.innerHTML = `
-    <div class="row"><h3>${v.title}</h3>
-      <div class="val"><em class="status">${v.need}</em></div></div>
-    <p>${v.hint}</p>
-    <video class="preview hidden" playsinline muted loop controls></video>
-    <div class="trim hidden">
-      <div class="lbl"><span>Analyze from</span><span class="t0l">0:00</span></div>
-      <input class="t0" type="range" min="0" max="100" value="0">
-      <div class="lbl"><span>to</span><span class="t1l">0:00</span></div>
-      <input class="t1" type="range" min="0" max="100" value="100">
-    </div>
-    <div class="slot-actions">
-      <button class="btn small ${v.key === "side" ? "" : "secondary"} rec">● Record</button>
-      <button class="btn small secondary pick">Choose a video</button>
-      <input type="file" accept="video/*" class="hidden file">
-    </div>`;
-
-  const q = (sel) => card.querySelector(sel);
-  const prev = q("video"), trim = q(".trim"), status = q(".status");
-  const recBtn = q(".rec"), pickBtn = q(".pick"), file = q(".file");
-
-  function loadClip(blob) {
-    state.clips[v.key] = blob;
-    if (state.urls[v.key]) URL.revokeObjectURL(state.urls[v.key]);  // a 10-minute clip is not small
-    state.urls[v.key] = URL.createObjectURL(blob);
-    prev.srcObject = null;
-    prev.src = state.urls[v.key];
-    prev.classList.remove("hidden");
-    trim.classList.remove("hidden");
-    prev.onloadedmetadata = () => {
-      syncTrim(prev, card, state, v.key);
-      ctx.refreshGo();
-    };
-    recBtn.innerHTML = "● Re-record";
-    recBtn.classList.add("secondary");   // the gold button moves on to Analyze
-    pickBtn.textContent = "Choose another";
-    ctx.refreshGo();
+    goBtn.disabled = !ready || isRecording();
+    goBtn.textContent = ready ? "Analyze this ride →" : "Film the side view to analyze";
   }
 
-  pickBtn.onclick = () => file.click();
-  file.onchange = (e) => e.target.files[0] && loadClip(e.target.files[0]);
+  function showClip(key) {
+    const url = state.urls[key];
+    if (!url) return;
+    play.src = url;
+    play.onloadedmetadata = () => { syncTrim(play, view, state, key).then(paint); };
+  }
 
-  recBtn.onclick = async () => {
-    const cur = ctx.getRec();
-    if (cur && cur.key === v.key) { cur.recorder.stop(); return; }
-    if (cur) { ctx.err.textContent = "Stop the clip you're already recording first."; return; }
-    ctx.err.textContent = "";
+  function loadClip(key, blob) {
+    state.clips[key] = blob;
+    if (state.urls[key]) URL.revokeObjectURL(state.urls[key]);
+    state.urls[key] = URL.createObjectURL(blob);
+    delete state.trims[key];
+    state.angle = key;
+    showClip(key);
+    paint();
+  }
+
+  async function startCamera() {
+    const msg = $("#stagemsg");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
+      state.stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: "environment", width: { ideal: 1280 } }, audio: false });
-      prev.classList.remove("hidden");
-      prev.removeAttribute("src");
-      prev.srcObject = stream; prev.muted = true; prev.play();
-      const chunks = [];
-      const recorder = new MediaRecorder(stream);
-      let timer = null;
-      recorder.ondataavailable = (e) => chunks.push(e.data);
-      recorder.onstop = () => {
-        stream.getTracks().forEach((t) => t.stop());
-        clearTimeout(timer);
-        ctx.setRec(null);
-        recBtn.innerHTML = "● Re-record";
-        loadClip(new Blob(chunks, { type: chunks[0]?.type || "video/webm" }));
-      };
-      recorder.start();
-      timer = setTimeout(() => recorder.state !== "inactive" && recorder.stop(), MAX_RECORD_MS);
-      ctx.setRec({ key: v.key, recorder });
-      recBtn.innerHTML = `<span class="rec-dot"></span>Stop`;
-      status.textContent = "Recording";
+      cam.srcObject = state.stream;
+      await cam.play().catch(() => {});
+      msg.classList.add("hidden");
     } catch (e) {
-      ctx.err.textContent = "Camera unavailable — choose a video instead. (" + e.message + ")";
+      // No camera is not a dead end — you can still import what you filmed.
+      msg.textContent = "No camera here — import a video instead.";
+      msg.classList.remove("hidden");
+      shoot.disabled = true;
+      err.textContent = "Camera unavailable (" + e.message + ")";
     }
+  }
+
+  view.querySelector("#angles").onclick = (e) => {
+    const btn = e.target.closest(".angle");
+    if (!btn || btn.disabled) return;
+    state.angle = btn.dataset.a;
+    if (state.clips[state.angle]) showClip(state.angle);
+    paint();
   };
 
-  return card;
+  shoot.onclick = () => {
+    if (isRecording()) { state.recorder.stop(); return; }
+    if (!state.stream) return;
+    err.textContent = "";
+    const key = state.angle, chunks = [];
+    const recorder = new MediaRecorder(state.stream);
+    recorder.ondataavailable = (ev) => chunks.push(ev.data);
+    recorder.onstop = () => {
+      clearTimeout(state.timer); clearInterval(state.tick);
+      state.recorder = null;
+      $("#recpill").classList.add("hidden");
+      loadClip(key, new Blob(chunks, { type: chunks[0]?.type || "video/webm" }));
+    };
+    recorder.start();
+    state.recorder = recorder;
+    state.timer = setTimeout(() => recorder.state !== "inactive" && recorder.stop(), MAX_RECORD_MS);
+    const t0 = Date.now();
+    $("#recpill").classList.remove("hidden");
+    state.tick = setInterval(() => { $("#rectime").textContent = clock((Date.now() - t0) / 1000); }, 250);
+    // back to the lens while it rolls, even if this angle already had a take
+    play.classList.add("hidden"); cam.classList.remove("hidden"); trim.classList.add("hidden");
+    paint();
+  };
+
+  retake.onclick = () => {
+    const key = state.angle;
+    if (state.urls[key]) URL.revokeObjectURL(state.urls[key]);
+    delete state.urls[key]; delete state.clips[key]; delete state.trims[key];
+    play.removeAttribute("src");
+    paint();
+  };
+
+  $("#import").onclick = () => $("#file").click();
+  $("#file").onchange = (e) => e.target.files[0] && loadClip(state.angle, e.target.files[0]);
+
+  goBtn.onclick = () => { if (!goBtn.disabled) { stopCamera(state); runAnalysis(view, user, state); } };
+
+  paint();
+  startCamera();
 }
 
-function syncTrim(video, card, state, key) {
-  const d = video.duration || 0;
-  const t0 = card.querySelector(".t0"), t1 = card.querySelector(".t1");
-  const status = card.querySelector(".status");
+/* A MediaRecorder blob reports duration Infinity until its end has been seeked,
+   so a freshly recorded clip would trim to nothing. Force the seek first. */
+function realDuration(video) {
+  if (Number.isFinite(video.duration) && video.duration > 0) return Promise.resolve(video.duration);
+  return new Promise((resolve) => {
+    const settle = () => {
+      video.removeEventListener("timeupdate", settle);
+      const d = Number.isFinite(video.duration) ? video.duration : 0;
+      video.currentTime = 0;
+      resolve(d);
+    };
+    video.addEventListener("timeupdate", settle);
+    video.currentTime = 1e101;
+  });
+}
+
+async function syncTrim(video, view, state, key) {
+  const d = await realDuration(video);
+  const t0 = view.querySelector("#t0"), t1 = view.querySelector("#t1");
   const update = () => {
     let a = (+t0.value / 100) * d, b = (+t1.value / 100) * d;
     if (b - a < 5) b = Math.min(d, a + 5);           // at least 5 s
     state.trims[key] = [a, b];
-    card.querySelector(".t0l").textContent = clock(a);
-    card.querySelector(".t1l").textContent = clock(b);
-    status.textContent = clock(b - a);
+    view.querySelector("#t0l").textContent = clock(a);
+    view.querySelector("#t1l").textContent = clock(b);
+    const chip = view.querySelector(`.angle[data-a="${key}"] .astate`);
+    if (chip) chip.textContent = clock(b - a);
     video.currentTime = a;
   };
+  t0.value = 0; t1.value = 100;
   t0.oninput = update; t1.oninput = update; update();
 }
 
 async function runAnalysis(view, user, state) {
+  stopCamera(state);
   view.innerHTML = `
   ${appbar()}
   <h1>Analyzing…</h1>
