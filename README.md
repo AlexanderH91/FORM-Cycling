@@ -51,6 +51,37 @@ cadence 75–95 rpm (TrainerRoad research review) · aero trade-offs (Fintelman 
    in `js/config.js`. They only drive copy and auto-submit — any code of 6+ digits can
    still be submitted by hand, and Supabase is the one that accepts or rejects it.
 
+## Tests
+
+```
+node tests/run.mjs              # every suite
+node tests/run.mjs nav gate     # only matching suites
+npx playwright install chromium # once, if it is not already there
+```
+
+The runner serves this repo over HTTP on an ephemeral port and drives the real
+app in a real browser — there is no build step, so what the browser loads is
+what ships. It exits non-zero on any failure.
+
+Suites are plain modules; run one directly with `node tests/angles.test.mjs`.
+Each check prints what it actually measured rather than "ok", because the
+measurement is the documentation:
+
+```
+PASS — your 28° ±3.1° is too close to call :: verdict="borderline" (band edge 2° away, spread 3.1°)
+PASS — drawn joint lands on the real marker :: drawn (251.3,111.1) vs marker (251.1,110.8) — 0.4px apart
+```
+
+Some suites exist because a specific bug shipped and should not come back:
+
+- `angles` — the aspect-ratio distortion that inverted a saddle verdict.
+- `canvas-size` — the stale canvas height that slid the overlay off the rider.
+- `seek-safety` — the unbounded `seeked` wait that hung the analysis at 40%.
+- `verdicts` — prescribing a saddle change from a gap smaller than the rider's
+  own stroke-to-stroke spread.
+- `overlay-on-video` — builds a clip with markers at known coordinates and
+  checks the drawn skeleton lands on them.
+
 ## Capture quality gate
 
 Every read is graded from the footage itself (`gradeCapture` in `js/analysis.js`,
