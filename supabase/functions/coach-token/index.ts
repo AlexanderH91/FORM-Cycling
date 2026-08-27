@@ -22,11 +22,11 @@ const MODEL = Deno.env.get("COACH_MODEL") ?? "gpt-realtime";
 const VOICE = Deno.env.get("COACH_VOICE") ?? "verse";
 
 /* The coach may choose its words. It may not choose the numbers: every figure
-   it says has to have come off the rider's own video, which the client sends
+   it says has to have come off the runner's own video, which the client sends
    in as context. This instruction is the server-side half of that rule. */
 const INSTRUCTIONS = `
-You are the FORM Cycling coach. You speak to a rider about a bike-fit analysis
-that was measured from their own video, on their own phone.
+You are the FORM Running coach. You speak to a runner about a gait analysis
+that was measured from their own treadmill video, on their own phone.
 
 Hard rules, in order of importance:
 1. Never state a number that was not given to you in the session context. Never
@@ -34,14 +34,21 @@ Hard rules, in order of importance:
    analysis did not measure, say plainly that FORM did not measure it.
 2. One fix at a time. The report names a single fix; that is the one you coach.
    Other findings are context you can discuss if asked, not new prescriptions.
-3. Never claim a verdict for a measurement that came without one. Some numbers
-   are reported with no band because no cited research band exists yet — say so
-   rather than inventing "good" or "bad".
+3. Most of what this app measures carries NO verdict, on purpose: running has
+   very few thresholds that hold up in the units a phone camera can produce.
+   Cadence and trunk lean are banded and cited. Knee flexion at contact, shin
+   angle at contact, vertical travel, knee sway and pelvic tilt are not. For
+   those, give the number and say there is no research band behind it — never
+   improvise "good", "bad", "a bit high", or a target to aim at.
 4. If the analysis was gated, the gate is the whole story. Talk about
-   re-filming, not about position.
+   re-filming, not about running form.
+5. You are not a clinician. Do not diagnose injuries, name pathologies, or
+   suggest that a measurement explains someone's pain. If a runner describes
+   pain, say plainly that FORM measures movement, not injury, and that pain is
+   worth taking to a physio.
 
-Be brief and plain. Short sentences. Talk like a coach beside the bike, not a
-report being read aloud. No praise sandwiches.
+Be brief and plain. Short sentences. Talk like a coach beside the treadmill,
+not a report being read aloud. No praise sandwiches.
 `.trim();
 
 const cors = {
@@ -61,7 +68,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return fail(405, "POST only");
   if (!OPENAI_KEY) return fail(503, "OPENAI_API_KEY is not set on this function");
 
-  // Only signed-in FORM riders. The browser sends its Supabase access token.
+  // Only signed-in FORM runners. The browser sends its Supabase access token.
   const auth = req.headers.get("Authorization") ?? "";
   if (!auth.startsWith("Bearer ")) return fail(401, "Sign in to use the coach");
   const who = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
@@ -69,12 +76,12 @@ Deno.serve(async (req) => {
   });
   if (!who.ok) return fail(401, "Sign in to use the coach");
 
-  // The rider's measured report, passed through as context the model may quote.
+  // The runner's measured report, passed through as context the model may quote.
   let context = "";
   try {
     const body = await req.json();
     if (body && typeof body.report === "object" && body.report !== null) {
-      context = "\n\nThis rider's latest measured report, the only source of "
+      context = "\n\nThis runner's latest measured report, the only source of "
         + "numbers you may use:\n" + JSON.stringify(body.report).slice(0, 6000);
     }
   } catch { /* context is optional; a coach with none simply has less to say */ }

@@ -14,7 +14,7 @@ export function renderLogin(view) {
   view.innerHTML = `
   ${appbar()}
   <h1>One camera.<br>One honest fix.</h1>
-  <p>Film yourself on your trainer with the phone you already own. FORM measures how you sit and pedal — averaged over every stroke — and coaches one change at a time. Same account as FORM Golf.</p>
+  <p>Prop your phone beside the treadmill and run. FORM measures how you carry yourself and how you land — averaged over every stride — and coaches one change at a time. Same account as FORM Golf and FORM Cycling.</p>
 
   <div class="glass card">
     <h3>Sign in</h3>
@@ -40,9 +40,10 @@ export function renderLogin(view) {
   </div>
 
   <div class="sect">Before your first analysis</div>
-  <div class="glass card"><h3>1 · Side view</h3><p>Phone at saddle height, 2–3 m away, whole bike and rider in frame. This view measures knee, hip, foot and your position.</p></div>
-  <div class="glass card"><h3>2 · Front view</h3><p>Phone at bar height, straight ahead. This view watches your knees track up and down.</p></div>
-  <div class="glass card"><h3>3 · From behind</h3><p>Phone behind the rear wheel, light from the side — never a window straight behind you. This view watches shoulders and pelvis.</p></div>
+  <div class="glass card"><h3>1 · Side view</h3><p>Phone at hip height, 2–3 m out to the side, your whole body in frame. This is the view we measure — cadence, trunk and how you land all come from it.</p></div>
+  <div class="glass card"><h3>2 · Front view</h3><p>Phone at hip height in front of the treadmill, straight on. This view watches your knees swing in and out.</p></div>
+  <div class="glass card"><h3>3 · From behind</h3><p>Phone behind the treadmill, light from the side — never a window straight behind you. This view watches shoulders and hips.</p></div>
+  <div class="footnote">Run at a steady, settled pace for the part you want measured. FORM needs a stretch of even rhythm, not a warm-up or a sprint finish.</div>
   `;
 
   const $ = (sel) => view.querySelector(sel);

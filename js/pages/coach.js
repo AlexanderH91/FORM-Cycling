@@ -1,5 +1,5 @@
 import { supa } from "../supa.js";
-import { COACH_TOKEN_ENDPOINT } from "../config.js";
+import { COACH_TOKEN_ENDPOINT, SESSION_TABLE } from "../config.js";
 import { appbar } from "../ui.js";
 
 /* Voice coach.
@@ -20,7 +20,7 @@ import { appbar } from "../ui.js";
 const REALTIME_CALLS = "https://api.openai.com/v1/realtime/calls";
 
 /* Two subjects, decided by where you came from: Home asks about progress
-   across sessions, a report asks about that ride. The coach arrives already
+   across sessions, a report asks about that run. The coach arrives already
    knowing which, so it never opens by asking what you want to talk about. */
 function subjectFromHash() {
   const q = location.hash.split("?")[1] ?? "";
@@ -30,20 +30,23 @@ function subjectFromHash() {
 /* A progression summary, built only from stored measurements. Every figure
    here came off a video; none is computed for effect. */
 function summarise(rows) {
-  const knee = (r) => r?.report?.kneeBendBDC?.value ?? r?.report?.kneeBendBDC?.mean;
-  const measured = rows.filter((r) => knee(r) != null);
+  const spm = (r) => {
+    const v = r?.report?.cadenceSpm?.value ?? r?.cadence_spm;
+    return v == null || Number.isNaN(Number(v)) ? null : Number(v);
+  };
+  const measured = rows.filter((r) => spm(r) != null);
   if (!measured.length) return null;
   const first = measured[0], last = measured.at(-1);
   const when = (r) => new Date(r.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" });
   return {
     sessions: rows.length,
     span: measured.length > 1 ? `${when(first)} to ${when(last)}` : when(last),
-    kneeFirst: +knee(first).toFixed(1),
-    kneeLast: +knee(last).toFixed(1),
-    kneeChange: measured.length > 1 ? +(knee(last) - knee(first)).toFixed(1) : null,
-    cadenceLast: last.cadence_rpm != null ? Math.round(last.cadence_rpm) : null,
+    cadenceFirst: +spm(first).toFixed(1),
+    cadenceLast: +spm(last).toFixed(1),
+    cadenceChange: measured.length > 1 ? +(spm(last) - spm(first)).toFixed(1) : null,
+    trunkLast: last.report?.trunkLean?.value != null ? +last.report.trunkLean.value.toFixed(1) : null,
     latestFix: last.report?.fix?.title ?? null,
-    history: measured.map((r) => ({ on: when(r), knee: +knee(r).toFixed(1) })),
+    history: measured.map((r) => ({ on: when(r), cadence: +spm(r).toFixed(1) })),
   };
 }
 
@@ -51,8 +54,8 @@ export async function renderCoach(view) {
   const about = subjectFromHash();
 
   const { data: rows } = await supa
-    .from("cycling_sessions")
-    .select("created_at, cadence_rpm, report")
+    .from(SESSION_TABLE)
+    .select("created_at, cadence_spm, report")
     .order("created_at", { ascending: true })
     .limit(30);
   const sessions = rows ?? [];
@@ -66,7 +69,7 @@ export async function renderCoach(view) {
     : { kind: "report", report };
 
   view.innerHTML = `
-  ${appbar(about === "progress" ? "progress" : "this ride")}
+  ${appbar(about === "progress" ? "progress" : "this run")}
   <div class="coach">
     <div class="orb" id="orb" data-mode="idle">
       <i class="ring r3"></i><i class="ring r2"></i><i class="ring r1"></i><i class="core"></i>
@@ -102,24 +105,24 @@ export async function renderCoach(view) {
      sentence here introduces a figure the analysis did not produce. */
   function script() {
     if (about === "progress") {
-      if (!progress) return ["You haven't filmed a ride yet. Film one and I'll have something to compare against."];
+      if (!progress) return ["You haven't filmed a run yet. Film one and I'll have something to compare against."];
       if (progress.sessions === 1)
         return ["This is your first analysis, so there's nothing to compare it with yet.",
-                `Your knee bent ${progress.kneeLast} degrees at the bottom. Film again after any change to the bike and I'll tell you which way it moved.`];
-      const dir = progress.kneeChange > 0 ? "more" : "less";
+                `You ran at ${progress.cadenceLast} steps a minute. Film again after a few weeks and I'll tell you which way it moved.`];
+      const dir = progress.cadenceChange > 0 ? "quicker" : "slower";
       return [
         `You've filmed ${progress.sessions} analyses, ${progress.span}.`,
-        `Your knee bend at the bottom went from ${progress.kneeFirst} degrees to ${progress.kneeLast}. That's ${Math.abs(progress.kneeChange)} degrees ${dir} bend.`,
+        `Your cadence went from ${progress.cadenceFirst} steps a minute to ${progress.cadenceLast}. That's ${Math.abs(progress.cadenceChange)} ${dir}.`,
         progress.latestFix ? `The latest fix is still ${progress.latestFix}.` : "",
       ].filter(Boolean);
     }
-    if (!report) return ["You haven't filmed a ride yet. Film the side view and I'll have something to tell you."];
+    if (!report) return ["You haven't filmed a run yet. Film the side view and I'll have something to tell you."];
     if (report.gate) return ["I couldn't trust the last read.", report.gate];
-    const lines = [`Here's the one thing from this ride. ${report.fix.title}.`, report.fix.line, `Try this. ${report.fix.cue}`];
-    const knee = report.cards?.find((c) => c.name?.startsWith("Knee at"));
-    if (knee) lines.push(`For reference, that knee measured ${knee.value} across ${report.strokes} strokes.`);
+    const lines = [`Here's the one thing from this run. ${report.fix.title}.`, report.fix.line, `Try this. ${report.fix.cue}`];
+    if (report.cadenceSpm?.value != null)
+      lines.push(`For reference, that was ${report.cadenceSpm.value.toFixed(0)} steps a minute across ${report.strides} strides.`);
     if (report.front?.asymmetry >= 1.35)
-      lines.push(`From the front, your ${report.front.looser} knee travels ${report.front.asymmetry} times as far as the other.`);
+      lines.push(`From the front, your ${report.front.looser} knee swings ${report.front.asymmetry} times as far as the other.`);
     return lines;
   }
 
@@ -254,9 +257,9 @@ function openingLine(about, report, progress) {
   if (about === "progress") {
     return progress
       ? `I've got ${progress.sessions} of your analyses in front of me. Ask me how you're tracking.`
-      : "No rides yet — film one and I'll have something to compare against.";
+      : "No runs yet — film one and I'll have something to compare against.";
   }
   return report
-    ? "I've read this ride. Tap and ask me anything about it."
-    : "No ride to talk about yet — film one and I'll take you through it.";
+    ? "I've read this run. Tap and ask me anything about it."
+    : "No run to talk about yet — film one and I'll take you through it.";
 }

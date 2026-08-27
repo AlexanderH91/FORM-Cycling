@@ -1,9 +1,12 @@
-import { BANDS, CAPTURE } from "./config.js";
+import { BANDS, CAPTURE, ANALYSIS, NO_BAND_REASON } from "./config.js";
 
-/* On-device side-view analysis.
-   MediaPipe Pose Landmarker (WASM) runs in the browser; the video never
-   leaves the phone. Port of the validated Python pipeline:
-   sample frames → landmarks → ankle-y cycle detection → per-stroke averages. */
+/* On-device side-view running analysis.
+   MediaPipe Pose Landmarker (WASM) runs in the browser; the video never leaves
+   the phone. Same machinery as FORM Cycling — sample frames → landmarks →
+   detect the gait cycle from ankle height → per-stride medians — with the
+   measurement layer replaced: strides instead of pedal strokes, and a much
+   smaller set of banded claims, because running has far fewer defensible
+   bands than bike fit does. */
 
 const MP_WASM = new URL("../assets/mp/", import.meta.url).href;
 const MP_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
@@ -38,9 +41,14 @@ export function angleAt(a, b, c) {
   const n = Math.hypot(...v1) * Math.hypot(...v2) + 1e-9;
   return deg(Math.acos(Math.max(-1, Math.min(1, dot / n))));
 }
-const median = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
+const median = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : 0; };
 const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 const sd = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((x) => (x - m) ** 2))); };
+const quantile = (a, q) => {
+  const s = [...a].sort((x, y) => x - y);
+  if (!s.length) return 0;
+  return s[Math.min(s.length - 1, Math.floor(q * s.length))];
+};
 
 function findPeaks(sig, minDist, prominence) {
   const peaks = [];
@@ -55,11 +63,34 @@ function findPeaks(sig, minDist, prominence) {
   return peaks.filter((p) => sig[p] - lo > prominence * (hi - lo));
 }
 
-// Palette shared with the FORM report shell. Verdict colour is only ever used
-// on the rider's own limb — never on a reference.
-const IN_BAND = "#34D27B", OUT_OF_BAND = "#F2C230";
+/* A sampled maximum only locates a foot contact to within half a frame. At 20
+   fps that is worth about 13 steps per minute near a runner's cadence — wider
+   than the band the verdict is read against, so the sampling grid alone could
+   decide it. Fitting a parabola through each peak and its two neighbours puts
+   the contact back where the signal says it was, between samples, and brings
+   the error under half a step per minute. Where a frame was dropped the
+   neighbours are not evenly spaced, so that peak is left where it landed. */
+function refineContacts(sig, times, peaks, fps) {
+  const dt = 1 / fps;
+  return peaks.map((i) => {
+    if (i <= 0 || i >= sig.length - 1) return times[i];
+    if (Math.abs(times[i] - times[i - 1] - dt) > dt * 0.5) return times[i];
+    if (Math.abs(times[i + 1] - times[i] - dt) > dt * 0.5) return times[i];
+    const den = sig[i - 1] - 2 * sig[i] + sig[i + 1];
+    if (Math.abs(den) < 1e-9) return times[i];
+    const d = 0.5 * (sig[i - 1] - sig[i + 1]) / den;
+    return Math.abs(d) <= 0.5 ? times[i] + d * dt : times[i];
+  });
+}
 
-// The camera sees one side of the rider; take whichever is more visible.
+/* Palette shared with the FORM report shell. The brand accent (volt) is NEVER
+   used here: it is chrome, and a colour on the runner's own body always means a
+   verdict. Green in band, ember out — the same pair FORM Golf and FORM Cycling
+   draw. Chalk is for a line that carries no verdict at all, which is most of
+   them in this app. */
+const IN_BAND = "#34D27B", OUT_OF_BAND = "#FF9147", CHALK = "#F2F4F1";
+
+// The camera sees one side of the runner; take whichever is more visible.
 function pickSide(p) {
   const L = (p[23].visibility ?? 1) + (p[25].visibility ?? 1) + (p[27].visibility ?? 1);
   const R = (p[24].visibility ?? 1) + (p[26].visibility ?? 1) + (p[28].visibility ?? 1);
@@ -69,7 +100,7 @@ function pickSide(p) {
 }
 
 // Every joint in `pts` must be visible in THIS frame — the caller checks that
-// before asking for a line. Solid = the rider's own body (line grammar).
+// before asking for a line. Solid = the runner's own body (line grammar).
 function limb(ctx, pts, colour, w, h) {
   const lw = Math.max(3, w * 0.006);
   ctx.lineWidth = lw; ctx.lineJoin = "round"; ctx.lineCap = "round";
@@ -121,32 +152,24 @@ async function keyframe(video, lm, t, draw, maxW = 720) {
    Squareness: filmed truly side-on, the two hips project onto nearly the same
    point; as the phone rotates off-axis they separate. Dividing that separation
    by trunk length and assuming a population hip-to-trunk proportion turns it
-   into an approximate yaw. It is an estimate of the CAMERA, not of the rider,
+   into an approximate yaw. It is an estimate of the CAMERA, not of the runner,
    and it only ever downgrades a report — it never invents a coaching number.
 
    Detection and visibility are the model's own account of whether it saw you,
    so those can refuse a read outright. */
 function gradeCapture(frames) {
-  const med = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : 0; };
   const detection = frames.sampled ? frames.seen / frames.sampled : 0;
-  const visibility = med(frames.vis);
+  const visibility = median(frames.vis);
   const clipped = frames.seen ? frames.clipped / frames.seen : 0;
 
-  const ratio = med(frames.hipSpread);
+  const ratio = median(frames.hipSpread);
   const offSquareDeg = +(deg(Math.asin(Math.min(1, ratio / CAPTURE.hipWidthOverTrunk)))).toFixed(0);
 
   if (detection < CAPTURE.minDetection)
-    return { grade: "F", reason: "We could only find you in part of the clip. Get the whole bike and rider in frame, in decent light, and film again." };
+    return { grade: "F", reason: "We could only find you in part of the clip. Get your whole body in frame, in decent light, and film again." };
   if (visibility < CAPTURE.minVisibility)
-    return { grade: "F", reason: "Your hip, knee and ankle were never clearly visible. Move the phone to saddle height, 2–3 m away, and film again." };
+    return { grade: "F", reason: "Your hip, knee and ankle were never clearly visible. Move the phone to hip height, 2–3 m out to the side, and film again." };
 
-  /* The squareness estimate is not trusted enough to suppress a measurement
-     yet: it read 21° on footage with 99% detection and 92% visibility, which
-     is a well-shot clip. The far hip is a low-confidence guess in a true side
-     view, so the separation it implies is probably the estimator's floor
-     rather than the camera's angle. It still reports, so it can be checked
-     against real clips — it just no longer overrides a good read. Flip
-     squarenessGates once the number has been shown to track reality. */
   const offSquare = CAPTURE.squarenessGates && offSquareDeg > CAPTURE.offSquareMaxDeg;
   const provisional = offSquare || clipped > CAPTURE.maxClipped;
   return {
@@ -157,22 +180,15 @@ function gradeCapture(frames) {
     detection: +detection.toFixed(2), visibility: +visibility.toFixed(2),
     reason: !provisional ? null
       : offSquare
-        ? `The phone looks about ${offSquareDeg}° off square to the bike. Angles read off an angled view are stretched, so this ride's numbers are provisional.`
-        : "Part of you left the frame during the stroke, so this ride's numbers are provisional.",
+        ? `The phone looks about ${offSquareDeg}° off square to the treadmill. Angles read off an angled view are stretched, so this run's numbers are provisional.`
+        : "Part of you left the frame while you ran, so this run's numbers are provisional.",
   };
 }
 
-/* Both extra views watch the frontal plane, where the honest unit is an angle
-   from vertical — scale-free, so it needs no calibration. Neither carries a
-   verdict band: no cited research band exists in the project for frontal-plane
-   knee travel or pelvic rock, and inventing one is exactly what rule 4 forbids.
-   Left-versus-right asymmetry IS judged, because it compares the rider to
-   themselves and needs no external threshold. */
-
 /* A MediaRecorder blob reports duration Infinity on a fresh element until its
    end has been seeked. Sampling past that point makes currentTime clamp, which
-   fires no "seeked" at all — the old code then waited on an event that would
-   never come and the analysis hung with the bar frozen. */
+   fires no "seeked" at all — waiting on an event that never comes hangs the
+   analysis with the bar frozen. */
 async function settleDuration(video) {
   if (Number.isFinite(video.duration) && video.duration > 0) return video.duration;
   await new Promise((resolve) => {
@@ -251,36 +267,38 @@ const amplitude = (a) => Math.max(...a) - Math.min(...a);
 
 /* Which pose to draw at a given moment of playback, if any.
    Returns null when the nearest analysed frame is too far away — the model
-   found nothing there, and a stale skeleton on a moving rider is exactly the
+   found nothing there, and a stale skeleton on a moving runner is exactly the
    "drawing without a measurement" the rules forbid. */
-export function overlayAt(track, t, tol = 0.12) {
+export function overlayAt(track, t, tol = 0.1) {
   if (!track?.length) return null;
   let lo = 0, hi = track.length - 1;
   while (lo < hi) { const mid = (lo + hi) >> 1; if (track[mid].t < t) lo = mid + 1; else hi = mid; }
   const a = track[Math.max(0, lo - 1)], b = track[lo];
   const f = Math.abs(a.t - t) <= Math.abs(b.t - t) ? a : b;
   if (Math.abs(f.t - t) > tol) return null;
-  const [lo_, hi_] = BANDS.kneeBendBDC;
-  return { ...f, inBand: f.knee >= lo_ && f.knee <= hi_ };
+  const [loB, hiB] = BANDS.trunkLean;
+  return { ...f, inBand: f.lean >= loB && f.lean <= hiB };
 }
 
-/* FRONT VIEW — how far each knee wanders sideways over the stroke.
+/* FRONT VIEW — how far each knee swings sideways across the stride.
    Measured per leg as the ankle→knee line's lean from vertical, so it is
-   independent of how far away the phone was. */
+   independent of how far away the phone was. No band exists for it, so the
+   travel itself is reported without a verdict; left-versus-right evenness IS
+   judged, because it compares the runner with themselves. */
 export async function analyzeFrontClip(blob, trim, onProgress) {
-  const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq) => {
-    /* Each leg stands on its own. Requiring both at once threw the whole frame
-       away whenever the far ankle passed behind the cranks — which is most of
-       the stroke — and one measured leg is still worth saying. */
+  const rows = await sampleFrames(blob, trim, onProgress, 15, 30, (p, sq) => {
+    /* Each leg stands on its own. Requiring both at once throws the whole frame
+       away whenever the far ankle passes behind the near one — which happens
+       every stride — and one measured leg is still worth saying. */
     const vis = (i) => (p[i].visibility ?? 1) >= CAPTURE.minJointVisibility;
     const row = { vis: mean([25, 26, 27, 28].map((i) => p[i].visibility ?? 1)) };
-    // Rider faces the camera: their left is on our right, so inward flips.
+    // Runner faces the camera: their left is on our right, so inward flips.
     if (vis(25) && vis(27)) row.left = fromVertical(sq(p[25]), sq(p[27]), true);
     if (vis(26) && vis(28)) row.right = fromVertical(sq(p[26]), sq(p[28]), false);
     return (row.left != null || row.right != null) ? row : null;
   });
 
-  const MIN = 12 * 2;                          // two seconds of a usable leg
+  const MIN = 15 * 2;                          // two seconds of a usable leg
   const leftVals = rows.filter((r) => r.left != null).map((r) => r.left);
   const rightVals = rows.filter((r) => r.right != null).map((r) => r.right);
   const seen = { ...rows.stat, left: leftVals.length, right: rightVals.length,
@@ -288,10 +306,10 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
   if (leftVals.length < MIN && rightVals.length < MIN)
     return { gate: "We couldn't hold either knee in view for long enough from the front. Frame both legs from the waist down, with the light in front of you, and film again.", seen };
 
-  const out = { seen, kneeTravel: {} };
-  if (leftVals.length >= MIN) out.kneeTravel.left = +amplitude(leftVals).toFixed(1);
-  if (rightVals.length >= MIN) out.kneeTravel.right = +amplitude(rightVals).toFixed(1);
-  const { left, right } = out.kneeTravel;
+  const out = { seen, kneeSway: {} };
+  if (leftVals.length >= MIN) out.kneeSway.left = +amplitude(leftVals).toFixed(1);
+  if (rightVals.length >= MIN) out.kneeSway.right = +amplitude(rightVals).toFixed(1);
+  const { left, right } = out.kneeSway;
   if (left != null && right != null) {
     const bigger = Math.max(left, right), smaller = Math.min(left, right);
     out.asymmetry = smaller > 0.5 ? +(bigger / smaller).toFixed(2) : null;
@@ -302,13 +320,15 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
   return out;
 }
 
-/* REAR VIEW — shoulder and pelvis rock, as the tilt of each line over the
-   stroke. Rock corroborates a saddle that is too high; it does not outrank
-   the side view, which is the view that measures saddle height. */
+/* REAR VIEW — shoulder and pelvis tilt across the stride. Reported, never
+   judged: FORM measures the TOTAL side-to-side range, and the published
+   thresholds for running describe peak drop on a single stance leg, which is a
+   different quantity. Borrowing that band would be exactly the invented
+   threshold rule 4 forbids. */
 export async function analyzeRearClip(blob, trim, onProgress) {
-  const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq) => {
-    // Shoulder line and hip line stand alone — a jersey hides hips far more
-    // often than shoulders, and shoulder rock on its own is still a finding.
+  const rows = await sampleFrames(blob, trim, onProgress, 15, 30, (p, sq) => {
+    // Shoulder line and hip line stand alone — a top hides hips far more often
+    // than shoulders, and shoulder rock on its own is still a finding.
     const vis = (i) => (p[i].visibility ?? 1) >= CAPTURE.minJointVisibility;
     const tilt = (a, b) => deg(Math.atan2(sq(b).y - sq(a).y, Math.abs(sq(b).x - sq(a).x) + 1e-9));
     const row = { vis: mean([11, 12, 23, 24].map((i) => p[i].visibility ?? 1)) };
@@ -317,20 +337,27 @@ export async function analyzeRearClip(blob, trim, onProgress) {
     return (row.shoulder != null || row.pelvis != null) ? row : null;
   });
 
-  const MIN = 12 * 2;
+  const MIN = 15 * 2;
   const sh = rows.filter((r) => r.shoulder != null).map((r) => r.shoulder);
   const pv = rows.filter((r) => r.pelvis != null).map((r) => r.pelvis);
   const seen = { ...rows.stat, shoulders: sh.length, pelvis: pv.length,
                  visibility: +mean(rows.length ? rows.map((r) => r.vis) : [0]).toFixed(2) };
   if (sh.length < MIN && pv.length < MIN)
-    return { gate: "We couldn't hold your shoulders or hips in view for long enough from behind. Stand the phone behind the rear wheel with light from the side, and film again.", seen };
+    return { gate: "We couldn't hold your shoulders or hips in view for long enough from behind. Stand the phone behind the treadmill with light from the side, and film again.", seen };
 
   const out = { seen };
-  if (sh.length >= MIN) out.shoulderRock = +amplitude(sh).toFixed(1);
-  if (pv.length >= MIN) out.pelvicRock = +amplitude(pv).toFixed(1);
+  if (sh.length >= MIN) out.shoulderTilt = +amplitude(sh).toFixed(1);
+  if (pv.length >= MIN) out.pelvicTilt = +amplitude(pv).toFixed(1);
   return out;
 }
 
+/* SIDE VIEW — the view FORM measures.
+
+   The gait cycle is found from the near ankle's height: it is at its lowest
+   when that foot is on the belt. Those troughs are one foot's contacts, so they
+   are STRIDES, not steps — cadence is quoted in steps per minute, which is
+   twice the stride rate. Getting that factor wrong would put every runner
+   exactly one octave out. */
 export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   onProgress(3, "Loading the pose model onto your phone…");
   const lm = await getLandmarker();
@@ -345,26 +372,24 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
 
   const sq = squareUp((video.videoWidth || 1) / (video.videoHeight || 1));
 
-  const FPS = 15;
+  const FPS = ANALYSIS.fps;
   const dur = await settleDuration(video);
-  const end = Math.min(t1, dur || t1, t0 + 60);           // analyze ≤60 s of the trim
+  const end = Math.min(t1, dur || t1, t0 + ANALYSIS.maxSeconds);
   const times = [];
   for (let t = t0; t < end; t += 1 / FPS) times.push(t);
 
   const rows = [];
   let missedSeeks = 0;
-  // Signals about the footage, gathered alongside the measurements.
   const frames = { sampled: 0, seen: 0, clipped: 0, vis: [], hipSpread: [] };
   const EDGE = 0.02;                       // a joint this close to the border is cut off
-  onProgress(8, "Reading your pedal strokes…");
+  onProgress(8, "Reading your stride…");
   for (let i = 0; i < times.length; i++) {
     if (!(await seekTo(video, times[i]))) {
       if (++missedSeeks >= 5) break;     // stop rather than wait on an event that will not come
       continue;
     }
     missedSeeks = 0;
-    const res = lm.detectForVideo(video, performance.now());
-    const p = res.landmarks?.[0];
+    const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
     frames.sampled++;
     if (p) {
       frames.seen++;
@@ -375,131 +400,231 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
       const used = [raw.hip, raw.knee, raw.ankle, raw.sho];
       frames.vis.push(mean(used.map((j) => j.visibility ?? 1)));
       if (used.some((j) => j.x < EDGE || j.x > 1 - EDGE || j.y < EDGE || j.y > 1 - EDGE)) frames.clipped++;
-      // Hip separation against trunk length — near zero when truly side-on.
       const trunk = Math.hypot(sho.x - hip.x, sho.y - hip.y);
       if (trunk > 1e-3) frames.hipSpread.push(Math.abs(sq(p[23]).x - sq(p[24]).x) / trunk);
-      // Raw (un-squared) coordinates travel with the row: drawing happens in
-      // image space, so the overlay can ride the clip frame by frame.
+
       const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
       rows.push({
-        t: times[i],                       // frames the model missed leave gaps; keep real time
+        t: times[i],                     // frames the model missed leave gaps; keep real time
         j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
-        // How well the model saw the joints this frame's angles are built from.
         conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
-        kneeBend: 180 - angleAt(hip, knee, ankle),
-        hip: angleAt(sho, hip, knee),
-        torso: deg(Math.atan2(Math.abs(sho.y - hip.y), Math.abs(sho.x - hip.x) + 1e-9)),
-        toeDown: -deg(Math.atan2(heel.y - toe.y, Math.abs(toe.x - heel.x) + 1e-9)),
-        ankleY: ankle.y,                   // y only — unaffected by the x correction
+        kneeFlex: 180 - angleAt(hip, knee, ankle),
+        /* Direction of travel is not known yet — the runner may face either way.
+           Store the raw components and sign them once, after the whole clip has
+           voted on which way "forward" is. */
+        leanX: sho.x - hip.x, leanY: hip.y - sho.y,
+        shankX: ankle.x - knee.x, shankY: ankle.y - knee.y,
+        toeAhead: toe.x - heel.x,
+        legLen: Math.hypot(hip.x - ankle.x, hip.y - ankle.y),
+        hipY: hip.y,
+        ankleY: ankle.y,                 // y only — unaffected by the x correction
       });
     }
-    onProgress(8 + (82 * i) / times.length);
+    onProgress(8 + (78 * i) / times.length);
   }
   const capture = gradeCapture(frames);
   // Rule 4: a failed read is the whole story — no numbers travel with it.
   if (capture.grade === "F") { release(); return { gate: capture.reason, capture }; }
-  if (rows.length < FPS * 5) { release(); return { gate: "We couldn't see you clearly for long enough. Check the framing — whole bike and rider, decent light — and film again.", capture }; }
+  if (rows.length < FPS * 5) { release(); return { gate: "We couldn't see you clearly for long enough. Check the framing — your whole body, decent light — and film again.", capture }; }
 
-  onProgress(92, "Averaging across strokes…");
+  onProgress(88, "Averaging across strides…");
+
+  /* Which way are you running? The toes sit ahead of the heels, so the sign of
+     that gap is the direction of travel. Decided once, from the whole clip,
+     because a single frame's foot can be mid-swing and lie. */
+  const fwd = Math.sign(median(rows.map((r) => r.toeAhead))) || 1;
+  for (const r of rows) {
+    r.lean = deg(Math.atan2(fwd * r.leanX, Math.max(1e-9, r.leanY)));
+    r.shank = deg(Math.atan2(fwd * r.shankX, Math.max(1e-9, r.shankY)));
+  }
+
+  // The near ankle is lowest when that foot is on the belt: one contact per stride.
   const ay = rows.map((r) => r.ankleY);
-  const bdc = findPeaks(ay, FPS * 0.45, 0.25);
-  const tdcIdx = findPeaks(ay.map((v) => -v), FPS * 0.45, 0.25);
-  if (bdc.length < 5) { release(); return { gate: "We couldn't find steady pedaling in the part you selected. Move the trim to a section where you ride continuously.", capture }; }
+  const contacts = findPeaks(ay, FPS * 0.28, 0.3);
+  if (contacts.length < ANALYSIS.minStrides) {
+    release();
+    return { gate: "We couldn't find steady running in the part you selected. Move the trim to a stretch where you run continuously, without changing pace.", capture };
+  }
 
-  // Row indices skip any frame the model could not read, so measure the stroke
-  // period from the frames' own timestamps instead of assuming none were lost.
-  const cadence = 60 / mean(bdc.slice(1).map((v, i) => rows[v].t - rows[bdc[i]].t));
+  /* Row indices skip any frame the model could not read, so take the stride
+     period from the frames' own timestamps rather than assuming none were lost.
+     One ankle's contacts are strides; cadence is quoted in steps, so it is
+     twice the stride rate. Getting that factor wrong would put every runner
+     exactly one octave out. */
+  const contactTimes = refineContacts(ay, rows.map((r) => r.t), contacts, FPS);
+  let intervals = contactTimes.slice(1)
+    .map((v, i) => v - contactTimes[i])
+    .filter((s) => s > 0.2 && s < 1.6);
+  const roughT = median(intervals);
+  // A missed contact doubles an interval and a spurious one halves it. Neither
+  // is a stride, so neither belongs in the average.
+  intervals = roughT > 0 ? intervals.filter((s) => s > 0.5 * roughT && s < 1.5 * roughT) : [];
+  if (intervals.length < 3) {
+    release();
+    return { gate: "Your stride didn't come out as a steady rhythm we could count. Trim to a stretch at one constant pace and film again if you need to.", capture };
+  }
 
-  /* A reported angle is the MEDIAN of the strokes that were clearly seen, not
-     the mean of every frame. One frame of bad landmarks used to drag the
-     average, and the average is what the fix is prescribed from. */
+  const strideT = mean(intervals);
+  const cadence = 120 / strideT;
+  /* Averaging many intervals recovers the timing, but their spread still
+     carries the sampling grid's own variance. Taking it back out leaves the
+     runner plus whatever the landmarks add — and never goes below zero. */
+  const varQuant = (1 / FPS) ** 2 / 6;
+  const sdStride = Math.sqrt(Math.max(0, sd(intervals) ** 2 - varQuant));
+  const cadenceSd = (120 / (strideT * strideT)) * sdStride;
+  /* A verdict is a claim about your AVERAGE cadence, so what decides it is how
+     firmly that average is pinned — the spread over the root of how many
+     strides went into it — not the stride-to-stride spread itself. Testing
+     against the raw spread would call almost every honest read "too close to
+     call", because most of that spread is the camera timing your feet, not you
+     running unevenly. */
+  const cadenceSem = cadenceSd / Math.sqrt(intervals.length);
+
+  /* A reported angle is the MEDIAN of the strides that were clearly seen, not
+     the mean of every frame. One frame of bad landmarks drags an average, and
+     the average is what the fix gets prescribed from. */
   const stat = (idxs, key) => {
     const vals = idxs.filter((i) => rows[i].conf >= CAPTURE.minJointVisibility).map((i) => rows[i][key]);
     if (!vals.length) return null;
     return { value: median(vals), sd: sd(vals), n: vals.length, of: idxs.length };
   };
   const allIdx = rows.map((_, i) => i);
-  const kneeBDC = stat(bdc, "kneeBend");
-  const toeBDC = stat(bdc, "toeDown");
-  const hipTDC = tdcIdx.length ? stat(tdcIdx, "hip") : null;
-  const torso = stat(allIdx, "torso");
-  if (!kneeBDC) { release(); return { gate: "We saw you pedalling but never clearly enough at the bottom of the stroke to measure the knee. Move the phone to saddle height, 2–3 m out to the side, and film again.", capture }; }
+  const trunk = stat(allIdx, "lean");
+  const kneeAtContact = stat(contacts, "kneeFlex");
+  const shankAtContact = stat(contacts, "shank");
 
-  /* A verdict needs the band edge to be further away than the rider's own
-     stroke-to-stroke variation. Inside that, the honest answer is that it is
+  /* Vertical oscillation, measured against the runner's own leg. Taking a
+     high percentile of hip-to-ankle distance gives the leg near full extension,
+     which is a stable body-scale ruler; dividing by it makes the number
+     scale-free, so it needs no tape measure and no assumed proportions. */
+  const legLen = quantile(rows.map((r) => r.legLen), 0.9);
+  const perStrideVO = [];
+  for (let i = 1; i < contacts.length; i++) {
+    const seg = rows.slice(contacts[i - 1], contacts[i]).map((r) => r.hipY);
+    if (seg.length >= 4 && legLen > 1e-4) perStrideVO.push((Math.max(...seg) - Math.min(...seg)) / legLen);
+  }
+  const vo = perStrideVO.length >= 3
+    ? { pct: +(median(perStrideVO) * 100).toFixed(1), sd: +(sd(perStrideVO) * 100).toFixed(1), strides: perStrideVO.length }
+    : null;
+
+  if (!trunk) {
+    release();
+    return { gate: "We saw you running but never clearly enough to measure your trunk. Move the phone to hip height, 2–3 m out to the side, and film again.", capture };
+  }
+
+  /* A verdict needs the band edge to be further away than the runner's own
+     stride-to-stride variation. Inside that, the honest answer is that it is
      too close to call — not a confident prescription built on 2 degrees. */
-  const verdictFor = (m, [lo, hi]) => {
+  const verdictFor = (m, [lo, hi], uncertainty) => {
     if (!m) return null;
     const edge = Math.min(Math.abs(m.value - lo), Math.abs(m.value - hi));
-    if (edge < m.sd) return "borderline";
+    if (edge < uncertainty) return "borderline";
     return m.value < lo ? "low" : m.value > hi ? "high" : "ok";
   };
 
-  const [kLo, kHi] = BANDS.kneeBendBDC;
-  const kneeVerdict = verdictFor(kneeBDC, BANDS.kneeBendBDC);
+  const [cLo, cHi] = BANDS.cadenceSpm;
+  /* Cadence is deliberately not symmetric. The research is about raising a low
+     step rate; nothing supports calling a high one a fault, so above the window
+     the number is reported and no verdict is claimed in either direction. */
+  const cadEdge = Math.min(Math.abs(cadence - cLo), Math.abs(cadence - cHi));
+  const cadenceVerdict =
+    cadence > cHi ? "above"
+    : cadEdge < cadenceSem ? "borderline"
+    : cadence < cLo ? "low" : "ok";
 
-  const toeVerdict = verdictFor(toeBDC, BANDS.footToeDown6);
-  const k = kneeBDC.value.toFixed(0), kSd = kneeBDC.sd.toFixed(1);
+  const [tLo, tHi] = BANDS.trunkLean;
+  const trunkSem = trunk.sd / Math.sqrt(Math.max(1, contacts.length));
+  const trunkVerdict = verdictFor(trunk, BANDS.trunkLean, trunkSem);
 
-  /* One fix per report, ranked: saddle (knee out of band) → foot far out →
-     torso note. A borderline knee outranks everything, because the honest
-     next move is another read rather than a change to the bike. */
+  const spm = cadence.toFixed(0), spmSd = cadenceSd.toFixed(0), spmSem = cadenceSem.toFixed(1);
+  const lean = trunk.value.toFixed(0), leanSd = trunk.sd.toFixed(1);
+
+  /* One fix per report, ranked: cadence (the one lever with trial evidence
+     behind it) → trunk posture → nothing to change. A borderline reading
+     outranks its own fix, because the honest next move is another read rather
+     than a change to how you run. */
   let fix;
-  if (kneeVerdict === "borderline")
+  if (cadenceVerdict === "borderline")
     fix = {
       title: "Too close to call",
-      line: `Your knee bends ${k}° at the bottom and the band runs ${kLo}–${kHi}°, but you vary ±${kSd}° from stroke to stroke — so the edge of the band is inside your own spread. Changing the saddle on that would be guesswork.`,
-      cue: "Film one more ride, same spot, same phone position. Two reads will say which side of the line you're on.",
+      line: `You're running at ${spm} steps a minute and the window is ${cLo}–${cHi}. That is nearer the edge than this read can resolve — the average is only pinned to about ±${spmSem} spm — so calling it either way would be guesswork.`,
+      cue: "Run one more clip at a steady, settled pace and film it the same way. Two reads will say which side of the line you're on.",
     };
-  else if (kneeVerdict === "low")
-    fix = { title: "Saddle looks high", line: `Your knee only bends ${k}° at the bottom (band ${kLo}–${kHi}°, ±${kSd}° across your strokes).`, cue: "Drop the saddle 5 mm, ride a minute, film again." };
-  else if (kneeVerdict === "high")
-    fix = { title: "Saddle looks low", line: `Your knee stays bent ${k}° at the bottom (band ${kLo}–${kHi}°, ±${kSd}° across your strokes).`, cue: "Raise the saddle 5 mm, ride a minute, film again." };
-  else if (toeBDC && toeVerdict === "high" && toeBDC.value > BANDS.footToeDown6[1] + 3)
-    fix = { title: "Very toe-down at the bottom", line: `Your foot points ${toeBDC.value.toFixed(0)}° down at the bottom of the stroke (band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}°).`, cue: "Think about dropping your heel through the bottom of the stroke — like scraping mud off the shoe." };
+  else if (cadenceVerdict === "low")
+    fix = {
+      title: "Your steps are long and slow",
+      line: `You're taking ${spm} steps a minute (window ${cLo}–${cHi}, ±${spmSd} across your strides). Trials that raised step rate by 5–10% lowered the load going through the hip and knee.`,
+      cue: `Aim for about ${Math.round(cadence * 1.07)} spm — same pace, quicker and shorter. A metronome or a playlist at that beat is the easiest way in.`,
+    };
+  else if (trunkVerdict === "borderline")
+    fix = {
+      title: "Too close to call",
+      line: `Your trunk sits ${lean}° forward and the window is ${tLo}–${tHi}°. That is nearer the edge than this read can resolve, so neither side of the line is earned yet.`,
+      cue: "Film one more run the same way. Two reads will settle which side of the line you're on.",
+    };
+  else if (trunkVerdict === "low")
+    fix = {
+      title: "You're running upright",
+      line: `Your trunk is ${lean}° forward of vertical (window ${tLo}–${tHi}°, ±${leanSd}° through the clip). Running more upright puts more stress through the front of the knee.`,
+      cue: "Lean from the ankles, not the waist — think of the whole body tipping very slightly forward, chest proud.",
+    };
+  else if (trunkVerdict === "high")
+    fix = {
+      title: "You're folded at the waist",
+      line: `Your trunk is ${lean}° forward of vertical (window ${tLo}–${tHi}°, ±${leanSd}° through the clip). Past that the hip has to work through a closed angle.`,
+      cue: "Stand taller through the chest and let the lean come from your ankles instead of your waist.",
+    };
   else
-    fix = { title: "Position holds up — keep riding", line: `Knee ${k}° at the bottom, cadence ${cadence.toFixed(0)} rpm — the basics are in their bands.`, cue: "Film again in a month, or after any change to the bike." };
+    fix = {
+      title: "Your form holds up — keep running",
+      line: `${spm} steps a minute, trunk ${lean}° forward. The two things FORM can put a research band against are both inside it.`,
+      cue: "Film again in a month, or after a change of shoes — that's when a stride usually moves.",
+    };
 
-  /* The picture has to be of the stroke the number describes, so show the one
-     closest to the average rather than an arbitrary or best-looking frame. */
-  onProgress(96, "Pulling the frames we measured on…");
+  /* The picture has to be of the stride the number describes, so show the one
+     closest to the reported value rather than an arbitrary or best-looking frame. */
+  onProgress(94, "Pulling the frames we measured on…");
   const closestTo = (idxs, key, target) =>
     idxs.reduce((best, i) => (Math.abs(rows[i][key] - target) < Math.abs(rows[best][key] - target) ? i : best), idxs[0]);
 
   const keyframes = [];
   try {
-    const bdcRow = closestTo(bdc, "kneeBend", kneeBDC.mean);
-    const bdcShot = await keyframe(video, lm, rows[bdcRow].t, (ctx, j, w, h) => {
-      if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
-      limb(ctx, [j.hip, j.knee, j.ankle], kneeVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
-      tag(ctx, `${rows[bdcRow].kneeBend.toFixed(0)}\u00b0`, j.knee, kneeVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
-    });
-    if (bdcShot) keyframes.push({
-      ...bdcShot, label: "Bottom of the stroke · 6 o'clock",
-      caption: bdcShot.drawn
-        ? `Knee ${rows[bdcRow].kneeBend.toFixed(0)}\u00b0 on this stroke — the average across all ${bdc.length} is ${kneeBDC.mean.toFixed(0)}\u00b0.`
-        : "We couldn't see hip, knee and ankle clearly enough in this frame to draw on it.",
-    });
-
-    if (hipTDC != null && tdcIdx.length) {
-      const tdcRow = closestTo(tdcIdx, "hip", hipTDC);
-      const hipOk = hipTDC >= BANDS.hipTDC[0] && hipTDC <= BANDS.hipTDC[1];
-      const tdcShot = await keyframe(video, lm, rows[tdcRow].t, (ctx, j, w, h) => {
-        if (!SEEN(j.sho) || !SEEN(j.hip) || !SEEN(j.knee)) return false;
-        limb(ctx, [j.sho, j.hip, j.knee], hipOk ? IN_BAND : OUT_OF_BAND, w, h);
-        tag(ctx, `${rows[tdcRow].hip.toFixed(0)}\u00b0`, j.hip, hipOk ? IN_BAND : OUT_OF_BAND, w, h);
+    // Contact: the leg carries no verdict, because neither knee flexion nor
+    // shank angle has a cited band. Chalk, not green or ember.
+    if (kneeAtContact) {
+      const cRow = closestTo(contacts, "kneeFlex", kneeAtContact.value);
+      const shot = await keyframe(video, lm, rows[cRow].t, (ctx, j, w, h) => {
+        if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
+        limb(ctx, [j.hip, j.knee, j.ankle], CHALK, w, h);
+        tag(ctx, `${rows[cRow].kneeFlex.toFixed(0)}°`, j.knee, CHALK, w, h);
       });
-      if (tdcShot) keyframes.push({
-        ...tdcShot, label: "Top of the stroke",
-        caption: tdcShot.drawn
-          ? `Hip fold ${rows[tdcRow].hip.toFixed(0)}\u00b0 on this stroke — the average is ${hipTDC.toFixed(0)}\u00b0.`
-          : "We couldn't see shoulder, hip and knee clearly enough in this frame to draw on it.",
+      if (shot) keyframes.push({
+        ...shot, label: "The moment you land",
+        caption: shot.drawn
+          ? `Knee bent ${rows[cRow].kneeFlex.toFixed(0)}° as this foot loaded — the middle of your ${contacts.length} contacts is ${kneeAtContact.value.toFixed(0)}°. Drawn in white, not green or amber: FORM has no research band for this one, so it carries no verdict.`
+          : "We couldn't see hip, knee and ankle clearly enough in this frame to draw on it.",
       });
     }
+
+    // Trunk: this one IS banded, so it gets a verdict colour.
+    const trunkRow = closestTo(allIdx, "lean", trunk.value);
+    const leanOk = trunkVerdict === "ok";
+    const shot = await keyframe(video, lm, rows[trunkRow].t, (ctx, j, w, h) => {
+      if (!SEEN(j.sho) || !SEEN(j.hip)) return false;
+      limb(ctx, [j.sho, j.hip], leanOk ? IN_BAND : OUT_OF_BAND, w, h);
+      tag(ctx, `${rows[trunkRow].lean.toFixed(0)}°`, j.sho, leanOk ? IN_BAND : OUT_OF_BAND, w, h);
+    });
+    if (shot) keyframes.push({
+      ...shot, label: "Your trunk, mid-run",
+      caption: shot.drawn
+        ? `Leaning ${rows[trunkRow].lean.toFixed(0)}° forward of vertical here; ${trunk.value.toFixed(0)}° is the middle of the whole clip. Window ${tLo}–${tHi}°.`
+        : "We couldn't see your shoulder and hip clearly enough in this frame to draw on it.",
+    });
   } catch { /* a report without stills still stands; the numbers are unaffected */ }
 
   onProgress(100);
   release();
+
   /* Rule 3: past 15 degrees off square, degree claims stop being claims. The
      camera becomes the fix and every verdict word comes off — the numbers stay
      visible, but they stop pretending to be judgements. */
@@ -508,14 +633,42 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     fix = {
       title: "Square the camera up first",
       line: capture.reason,
-      cue: "Stand the phone level with the saddle, straight out to the side of the bike, and film again — then these numbers are worth acting on.",
+      cue: "Stand the phone at hip height, straight out to the side of the treadmill, and film again — then these numbers are worth acting on.",
     };
   }
 
-  /* The clip itself, frame-aligned. Lets the report play the ride back with
-     the angle moving on the rider instead of two frozen stills. Held in
+  /* The clip itself, frame-aligned. Lets the report play the run back with the
+     trunk angle moving on the runner instead of two frozen stills. Held in
      memory only — it is derived from video, so it never goes to the server. */
-  const track = rows.map((r) => ({ t: +r.t.toFixed(3), j: r.j, knee: +r.kneeBend.toFixed(1) }));
+  const track = rows.map((r) => ({
+    t: +r.t.toFixed(3), j: r.j,
+    lean: +r.lean.toFixed(1), kneeFlex: +r.kneeFlex.toFixed(1),
+  }));
+
+  const cards = [
+    { name: "Cadence", value: spm + " spm",
+      verdict: cadenceVerdict === "ok" ? "In band" : cadenceVerdict === "low" ? "Watch"
+             : cadenceVerdict === "borderline" ? "Close" : "",
+      note: cadenceVerdict === "above"
+        ? `Above the ${cLo}–${cHi} window this app coaches into. Nothing in the research calls a high step rate a fault, so FORM reports it and claims nothing either way. ±${spmSd} spm across ${contacts.length} strides.`
+        : `Steps per minute, both feet, counted from ${contacts.length} contacts of one foot. Window ${cLo}–${cHi} spm (Heiderscheit 2011; Schubert 2014) — guidance, not a universal target: cadence rises with pace and falls with height. Strides landed within ±${spmSd} spm of each other, which includes how precisely a phone can time a footfall; the average itself is pinned to about ±${spmSem} spm.` },
+    { name: "Trunk lean", value: lean + "° forward",
+      verdict: trunkVerdict === "ok" ? "In band" : trunkVerdict === "borderline" ? "Close" : "Watch",
+      note: `Hip to shoulder, against vertical, across the whole clip. Window ${tLo}–${tHi}° (Teng & Powers 2014). ±${leanSd}° as you run.` },
+  ];
+  if (kneeAtContact) cards.push({
+    name: "Knee when you land", value: kneeAtContact.value.toFixed(0) + "°",
+    note: `${NO_BAND_REASON.kneeAtContact} ±${kneeAtContact.sd.toFixed(1)}° across ${kneeAtContact.n} contacts${kneeAtContact.n < kneeAtContact.of ? ` of ${kneeAtContact.of}` : ""}.`,
+  });
+  if (shankAtContact) cards.push({
+    name: "Shin angle when you land",
+    value: `${shankAtContact.value > 0 ? "+" : ""}${shankAtContact.value.toFixed(0)}°`,
+    note: `Positive means your foot lands ahead of your knee. ${NO_BAND_REASON.shankAtContact} ±${shankAtContact.sd.toFixed(1)}° across your contacts.`,
+  });
+  if (vo) cards.push({
+    name: "Vertical travel", value: vo.pct + "% of your leg",
+    note: `How far your hips rise and fall each stride, measured against your own leg length. ${NO_BAND_REASON.verticalOscillation} ±${vo.sd}% across ${vo.strides} strides.`,
+  });
 
   return {
     capture,
@@ -523,30 +676,19 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     track,
     trim: [t0, t1],
     keyframes,
-    strokes: bdc.length,
+    strides: contacts.length,
     cadence,
-    kneeBendBDC: { value: +kneeBDC.value.toFixed(1), sd: +kneeBDC.sd.toFixed(1),
-                   strokes: kneeBDC.n, of: kneeBDC.of, centre: "median",
-                   mean: +kneeBDC.value.toFixed(1) },   // .mean kept for rows written before this
-    kneeVerdict,
+    cadenceSpm: { value: +cadence.toFixed(1), sd: +cadenceSd.toFixed(1),
+                  sem: +cadenceSem.toFixed(2), strides: contacts.length },
+    cadenceVerdict,
+    trunkLean: { value: +trunk.value.toFixed(1), sd: +trunk.sd.toFixed(1), n: trunk.n, of: trunk.of },
+    trunkVerdict,
+    kneeAtContact: kneeAtContact && { value: +kneeAtContact.value.toFixed(1), sd: +kneeAtContact.sd.toFixed(1), n: kneeAtContact.n, of: kneeAtContact.of },
+    shankAtContact: shankAtContact && { value: +shankAtContact.value.toFixed(1), sd: +shankAtContact.sd.toFixed(1), n: shankAtContact.n, of: shankAtContact.of },
+    verticalOscillation: vo,
     fix,
-    cards: (provisional ? stripVerdicts : (c) => c)([
-      { name: "Knee at 6 o'clock", value: k + "°", verdict: word(kneeVerdict),
-        note: `Band ${kLo}–${kHi}° while riding — this is the saddle-height check. ±${kSd}° across ${kneeBDC.n} clearly-seen strokes${kneeBDC.n < kneeBDC.of ? ` of ${kneeBDC.of}` : ""}.` },
-      ...(toeBDC ? [{ name: "Foot at 6 o'clock", value: toeBDC.value.toFixed(0) + "° toe-down", verdict: word(toeVerdict),
-        note: `Band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}° toe-down at the bottom. ±${toeBDC.sd.toFixed(1)}° across your strokes.` }] : []),
-      ...(hipTDC ? [{ name: "Hip fold at the top", value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
-        note: `Fitting window ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° depending on flexibility. ±${hipTDC.sd.toFixed(1)}° across your strokes.` }] : []),
-      { name: "Cadence", value: cadence.toFixed(0) + " rpm", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Research sweet spot ${BANDS.cadence[0]}–${BANDS.cadence[1]} rpm for experienced riders.` },
-      { name: "Torso angle", value: torso.value.toFixed(0) + "°", note: "Above horizontal. What it's worth in watts depends on speed — ride-file pairing comes next." },
-    ]),
+    cards: provisional ? stripVerdicts(cards) : cards,
   };
-}
-
-/* "Close" is a real answer: the number sits nearer the band edge than the
-   rider's own stroke-to-stroke spread, so neither side of the line is earned. */
-function word(v) {
-  return v === "ok" ? "OK" : v === "borderline" ? "Close" : v ? "Watch" : "";
 }
 
 // A number measured through a bad camera angle keeps its value and loses its verdict.
