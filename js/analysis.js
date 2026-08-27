@@ -103,7 +103,14 @@ const SEEN = (pt) => (pt?.visibility ?? 1) > 0.5;
    `draw` returns false when the joints it needs are not visible in this exact
    frame — then the still is shown with nothing drawn rather than a guess. */
 async function keyframe(video, lm, t, draw, maxW = 720) {
-  if (!(await seekTo(video, t))) return null;   // no frame, no drawing
+  /* The sampling pass leaves the video at the end of the clip, so grabbing a
+     keyframe means a long seek backwards — and in a MediaRecorder file, which
+     carries no seek index, that is far slower than the forward steps the loop
+     makes. The loop's 2.5s budget silently turned every keyframe into null and
+     the report lost its stills. Rewind first, then go forward to the frame,
+     with a budget that suits a one-off. */
+  if (!(await seekTo(video, 0, 6000))) return null;
+  if (!(await seekTo(video, t, 8000))) return null;   // no frame, no drawing
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return null;
   const scale = Math.min(1, maxW / vw);
@@ -187,7 +194,7 @@ async function settleDuration(video) {
 
 // Resolves false when the seek never lands, so one bad frame costs a frame
 // rather than the whole run.
-function seekTo(video, t) {
+function seekTo(video, t, budgetMs = 2500) {
   return new Promise((resolve) => {
     let settled = false;
     const finish = (ok) => {
@@ -199,7 +206,7 @@ function seekTo(video, t) {
     };
     const onSeeked = () => finish(true);
     video.addEventListener("seeked", onSeeked);
-    const timer = setTimeout(() => finish(false), 2500);
+    const timer = setTimeout(() => finish(false), budgetMs);
     try { video.currentTime = t; } catch { finish(false); }
   });
 }

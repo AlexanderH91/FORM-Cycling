@@ -1,3 +1,8 @@
+/* Bump on every deploy. Shown in the report footnote and on Profile so a
+   screenshot says which build produced it — iOS caches modules hard, and
+   "is this the new code?" has cost more debugging rounds than any bug. */
+export const BUILD = "2026-08-27-f";
+
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
 export const SUPABASE_KEY = "sb_publishable_kS46cZQwLOJg6IvNWagNXA_faBH5ffq";

@@ -1,5 +1,5 @@
 import { supa } from "../supa.js";
-import { MAX_RECORD_MS } from "../config.js";
+import { MAX_RECORD_MS, BUILD } from "../config.js";
 import { analyzeSideClip, analyzeFrontClip, analyzeRearClip, overlayAt } from "../analysis.js";
 import { go } from "../main.js";
 import { appbar } from "../ui.js";
@@ -119,10 +119,15 @@ function drawCapture(view, user, state) {
   function showClip(key) {
     const url = state.urls[key];
     if (!url) return;
+    /* A display:none video never decodes a frame, so the element has to be on
+       screen BEFORE the clip loads — otherwise the card shows a black
+       rectangle behind a play button no matter what we seek to. */
+    play.classList.remove("hidden");
+    cam.classList.add("hidden");
     play.src = url;
+    play.load();
     play.onloadedmetadata = () => {
-      // Show the footage, not a black rectangle: seeking to a time the element
-      // already sits on fires no seek, so nudge off zero to force a frame.
+      // Seeking to a time it already sits on fires no seek, so nudge off zero.
       play.currentTime = 0.03;
       syncTrim(play, view, state, key).then(paint);
     };
@@ -404,7 +409,7 @@ function drawReport(view, r, sideClip) {
       <span class="cmic"></span>Talk about this ride</a>
     <a class="btn" href="#/home">Done</a>`}
   <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes${
-    r.capture?.offSquareDeg != null ? ` · camera about ${r.capture.offSquareDeg}° off square` : ""} · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}</div>`;
+    r.capture?.offSquareDeg != null ? ` · camera about ${r.capture.offSquareDeg}° off square` : ""} · build ${BUILD} · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}</div>`;
   if (canPlay) wirePlayer(view, r, sideClip);
 }
 

@@ -13,7 +13,7 @@ const r = await page.evaluate(async () => {
   const src = await (await fetch('/js/analysis.js')).text();
   return {
     unboundedAwaits: (src.match(/onseeked\s*=\s*res/g) || []).length,
-    hasTimeout: /setTimeout\(\(\) => finish\(false\), \d+\)/.test(src),
+    hasTimeout: /setTimeout\(\(\) => finish\(false\), budgetMs\)/.test(src) && /budgetMs = 2500/.test(src),
     clampsToDuration: /Math\.min\(t1, dur \|\| t1/.test(src),
     settles: /settleDuration/.test(src),
     bailsOut: /missed\s*>=\s*5|missedSeeks\s*>=\s*5/.test(src),
@@ -21,7 +21,7 @@ const r = await page.evaluate(async () => {
   };
 });
 T('no unbounded waits on "seeked" remain', r.unboundedAwaits === 0, `found ${r.unboundedAwaits}`);
-T('every seek is time-bounded', r.hasTimeout, `timeout present=${r.hasTimeout}`);
+T('every seek is time-bounded, with a per-call budget', r.hasTimeout, `budgetMs parameter, default 2500ms`);
 T('duration is settled before sampling', r.settles, `settleDuration=${r.settles}`);
 T('sampling window clamps to real duration', r.clampsToDuration, `clamped=${r.clampsToDuration}`);
 T('run bails out after repeated dead seeks', r.bailsOut, `bail=${r.bailsOut}`);
