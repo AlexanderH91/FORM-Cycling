@@ -11,7 +11,17 @@ const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const cfg  = readFileSync(new URL('../js/config.js', import.meta.url), 'utf8');
 const htmlBuild = html.match(/data-build="([^"]+)"/)?.[1];
 const jsBuild   = cfg.match(/BUILD = "([^"]+)"/)?.[1];
+const htmlVer   = html.match(/data-version="([^"]+)"/)?.[1];
+const jsVer     = cfg.match(/VERSION = "([^"]+)"/)?.[1];
 T('the two build strings are kept in step', htmlBuild === jsBuild, `html=${htmlBuild} js=${jsBuild}`);
+T('so are the two version strings', htmlVer === jsVer, `html=${htmlVer} js=${jsVer}`);
+
+// The pill's own text is static markup, so it can drift from both of them.
+const tagText = html.match(/id="vertag"[^>]*>\s*([^<]+)/)?.[1].trim();
+T('the pill shows the version it ships', tagText === htmlVer, `pill="${tagText}" version=${htmlVer}`);
+// A rename is also a purge, so the worker has to be bumped with the version.
+const swCache = readFileSync(new URL('../sw.js', import.meta.url), 'utf8').match(/CACHE = "([^"]+)"/)?.[1];
+T('the worker cache is bumped with it', swCache?.endsWith(htmlVer), `cache=${swCache}`);
 
 /* Requests a service worker makes are invisible to page.route, so the suites
    that fake a stale deploy run with workers blocked. The first block keeps them
@@ -30,7 +40,7 @@ const ctx = (opts) => b.newContext({ ...phone, ...opts });
     const r = tag.getBoundingClientRect();
     return { label: tag.textContent.trim(), onScreen: r.top >= 0 && r.right <= innerWidth && r.width > 0 };
   });
-  T('a version tag is visible on screen', seen.onScreen && /v1/.test(seen.label), `label="${seen.label}"`);
+  T('a version tag is visible on screen', seen.onScreen && seen.label.includes(htmlVer), `label="${seen.label}"`);
 
   await page.click('#vertag');
   await page.waitForFunction(() => document.getElementById('verjs').textContent !== 'loading…', null, { timeout: 8000 });

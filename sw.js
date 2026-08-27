@@ -6,7 +6,9 @@
  * This asks the network first for same-origin files and only falls back to the
  * cache when offline, so a deploy is live on the next load. */
 
-const CACHE = "form-cycling-v1";
+/* Bumped with the app version: activate() deletes every cache that is not this
+   one, so a rename is also a purge of whatever the previous version stored. */
+const CACHE = "form-cycling-v2";
 
 self.addEventListener("install", () => self.skipWaiting());
 
