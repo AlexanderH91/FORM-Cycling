@@ -13,6 +13,9 @@ const routes = {
   login:   { render: renderLogin,  auth: false, nav: false },
   home:    { render: renderHome,   auth: true,  nav: true },
   analyze: { render: renderAnalyze,auth: true,  nav: true },
+  journey: { render: (v)=>renderLocked(v,"Journey","Your long-term riding story lives here — it unlocks after your first few analyses."), auth: true, nav: true },
+  // Reached from Home and from a report, not from the nav — the coach always
+  // arrives already knowing which of the two you wanted to talk about.
   coach:   { render: renderCoach,  auth: true,  nav: true },
   drills:  { render: (v)=>renderLocked(v,"Drills","Targeted exercises matched to your fixes. Coming soon."), auth: true, nav: true },
   profile: { render: renderProfile,auth: true,  nav: true },

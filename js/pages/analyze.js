@@ -243,15 +243,16 @@ async function runAnalysis(view, user, state) {
        measurements and, where they agree, corroborate its fix. A view that
        fails its own gate reports that and nothing else. */
     if (!report.gate) {
+      // Each extra view owns a slice of the bar, so it keeps moving instead of
+      // sitting frozen for the minute a clip takes to sample.
+      const slice = (from, to) => (f) => { bar.style.width = (from + (to - from) * Math.min(1, f)) + "%"; };
       if (state.clips.front && state.trims.front) {
         stage.textContent = "Reading your knees from the front…";
-        bar.style.width = "40%";
-        report.front = await analyzeFrontClip(state.clips.front, state.trims.front);
+        report.front = await analyzeFrontClip(state.clips.front, state.trims.front, slice(40, 70));
       }
       if (state.clips.rear && state.trims.rear) {
         stage.textContent = "Reading shoulders and pelvis from behind…";
-        bar.style.width = "75%";
-        report.rear = await analyzeRearClip(state.clips.rear, state.trims.rear);
+        report.rear = await analyzeRearClip(state.clips.rear, state.trims.rear, slice(70, 96));
       }
       bar.style.width = "100%";
       addExtraViewCards(report);
@@ -346,6 +347,8 @@ function drawReport(view, r) {
       <div class="glass card"><div class="row"><h3>${c.name}</h3>
         <div class="val">${c.value} ${c.verdict ? `<em>${c.verdict}</em>` : ""}</div></div>
         <p>${c.note}</p></div>`).join("")}
+    <a class="btn secondary coach-cta" href="#/coach?about=report">
+      <span class="cmic"></span>Talk about this ride</a>
     <a class="btn" href="#/home">Done</a>`}
   <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}</div>`;
 }

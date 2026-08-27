@@ -103,8 +103,7 @@ const SEEN = (pt) => (pt?.visibility ?? 1) > 0.5;
    `draw` returns false when the joints it needs are not visible in this exact
    frame — then the still is shown with nothing drawn rather than a guess. */
 async function keyframe(video, lm, t, draw, maxW = 720) {
-  video.currentTime = t;
-  await new Promise((res) => { video.onseeked = res; });
+  if (!(await seekTo(video, t))) return null;   // no frame, no drawing
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return null;
   const scale = Math.min(1, maxW / vw);
@@ -124,6 +123,41 @@ async function keyframe(video, lm, t, draw, maxW = 720) {
    Left-versus-right asymmetry IS judged, because it compares the rider to
    themselves and needs no external threshold. */
 
+/* A MediaRecorder blob reports duration Infinity on a fresh element until its
+   end has been seeked. Sampling past that point makes currentTime clamp, which
+   fires no "seeked" at all — the old code then waited on an event that would
+   never come and the analysis hung with the bar frozen. */
+async function settleDuration(video) {
+  if (Number.isFinite(video.duration) && video.duration > 0) return video.duration;
+  await new Promise((resolve) => {
+    const done = () => { video.removeEventListener("timeupdate", done); resolve(); };
+    video.addEventListener("timeupdate", done);
+    video.currentTime = 1e101;
+    setTimeout(done, 2000);
+  });
+  video.currentTime = 0;
+  return Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
+}
+
+// Resolves false when the seek never lands, so one bad frame costs a frame
+// rather than the whole run.
+function seekTo(video, t) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      video.removeEventListener("seeked", onSeeked);
+      clearTimeout(timer);
+      resolve(ok);
+    };
+    const onSeeked = () => finish(true);
+    video.addEventListener("seeked", onSeeked);
+    const timer = setTimeout(() => finish(false), 2500);
+    try { video.currentTime = t; } catch { finish(false); }
+  });
+}
+
 async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read) {
   const lm = await getLandmarker();
   const video = document.createElement("video");
@@ -137,14 +171,20 @@ async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read) {
       video.onerror = () => rej(new Error("could not read the video"));
     });
     const sq = squareUp((video.videoWidth || 1) / (video.videoHeight || 1));
-    const span = Math.min(t1 - t0, seconds);
+    const dur = await settleDuration(video);
+    const end = Math.min(t1, dur || t1, t0 + seconds);
+    const total = Math.max(1, Math.round((end - t0) * fps));
     const rows = [];
-    for (let t = t0, i = 0; t < t0 + span; t += 1 / fps, i++) {
-      video.currentTime = t;
-      await new Promise((res) => { video.onseeked = res; });
+    let missed = 0;
+    for (let t = t0, i = 0; t < end; t += 1 / fps, i++) {
+      if (!(await seekTo(video, t))) {
+        if (++missed >= 5) break;        // the clip has stopped giving frames
+        continue;
+      }
+      missed = 0;
       const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
       if (p) { const row = read(p, sq, t); if (row) rows.push(row); }
-      onProgress?.(i);
+      onProgress?.(i / total);
     }
     return rows;
   } finally { release(); }
@@ -228,15 +268,21 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
 
   const sq = squareUp((video.videoWidth || 1) / (video.videoHeight || 1));
 
-  const FPS = 15, span = Math.min(t1 - t0, 60);           // analyze ≤60 s of the trim
+  const FPS = 15;
+  const dur = await settleDuration(video);
+  const end = Math.min(t1, dur || t1, t0 + 60);           // analyze ≤60 s of the trim
   const times = [];
-  for (let t = t0; t < t0 + span; t += 1 / FPS) times.push(t);
+  for (let t = t0; t < end; t += 1 / FPS) times.push(t);
 
   const rows = [];
+  let missedSeeks = 0;
   onProgress(8, "Reading your pedal strokes…");
   for (let i = 0; i < times.length; i++) {
-    video.currentTime = times[i];
-    await new Promise((res) => { video.onseeked = res; });
+    if (!(await seekTo(video, times[i]))) {
+      if (++missedSeeks >= 5) break;     // stop rather than wait on an event that will not come
+      continue;
+    }
+    missedSeeks = 0;
     const res = lm.detectForVideo(video, performance.now());
     const p = res.landmarks?.[0];
     if (p) {
