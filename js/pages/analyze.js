@@ -1,6 +1,6 @@
 import { supa } from "../supa.js";
 import { MAX_RECORD_MS } from "../config.js";
-import { analyzeSideClip, analyzeFrontClip, analyzeRearClip } from "../analysis.js";
+import { analyzeSideClip, analyzeFrontClip, analyzeRearClip, overlayAt } from "../analysis.js";
 import { go } from "../main.js";
 import { appbar } from "../ui.js";
 
@@ -259,7 +259,7 @@ async function runAnalysis(view, user, state) {
     }
     // Keyframes are frames of your video. The promise is that video never
     // leaves the phone, so they are shown here and never sent to the server.
-    const { keyframes, ...stored } = report;
+    const { keyframes, track, ...stored } = report;
     const { error } = await supa.from("cycling_sessions").insert({
       user_id: user.id,
       cadence_rpm: report.cadence ?? null,
@@ -267,7 +267,7 @@ async function runAnalysis(view, user, state) {
       report: stored,
     });
     if (error) throw error;
-    drawReport(view, report);
+    drawReport(view, report, state.clips.side);
   } catch (e) {
     view.querySelector("#err").textContent = "Analysis failed: " + e.message;
     stage.textContent = "Something went wrong — your clips are still on your phone; try again.";
@@ -277,14 +277,23 @@ async function runAnalysis(view, user, state) {
 /* Cards for the extra views. No verdict word where the project has no cited
    band — the number and its meaning, and nothing implied beyond it. */
 function addExtraViewCards(r) {
+  // A gate says what it saw, so a failure is diagnosable instead of mysterious.
+  const why = (seen) => !seen ? "" :
+    ` (found you in ${seen.posed} of ${seen.sampled} frames over ${seen.span}s, average joint confidence ${seen.visibility})`;
+
   const f = r.front;
   if (f?.gate) {
-    r.cards.push({ name: "Knees from the front", value: "—", note: f.gate });
+    r.cards.push({ name: "Knees from the front", value: "—", note: f.gate + why(f.seen) });
   } else if (f) {
+    const t = f.kneeTravel;
+    const both = t.left != null && t.right != null;
     r.cards.push({
       name: "Knee travel (front)",
-      value: `${f.kneeTravel.left}° L · ${f.kneeTravel.right}° R`,
-      note: "How far each knee leans in and out across the stroke, measured from vertical. No research band for this in FORM yet, so it is reported without a verdict.",
+      value: both ? `${t.left}° L · ${t.right}° R` : `${t.left ?? t.right}° ${f.oneLegOnly === "left" ? "L" : "R"}`,
+      note: (both
+        ? "How far each knee leans in and out across the stroke, measured from vertical."
+        : `Only your ${f.oneLegOnly} knee stayed in view long enough to measure. This is how far it leans in and out across the stroke.`)
+        + " No research band for this in FORM yet, so it is reported without a verdict.",
     });
     if (f.asymmetry) {
       const even = f.asymmetry < 1.35;
@@ -301,14 +310,14 @@ function addExtraViewCards(r) {
 
   const b = r.rear;
   if (b?.gate) {
-    r.cards.push({ name: "Shoulders and pelvis (behind)", value: "—", note: b.gate });
+    r.cards.push({ name: "Shoulders and pelvis (behind)", value: "—", note: b.gate + why(b.seen) });
   } else if (b) {
-    r.cards.push({
+    if (b.pelvicRock != null) r.cards.push({
       name: "Pelvic rock (behind)",
       value: `${b.pelvicRock}°`,
       note: "How much your hips tilt side to side over the stroke. Reported without a verdict — FORM has no cited band for it yet.",
     });
-    r.cards.push({
+    if (b.shoulderRock != null) r.cards.push({
       name: "Shoulder rock (behind)",
       value: `${b.shoulderRock}°`,
       note: "Side-to-side tilt across the shoulders over the stroke.",
@@ -321,8 +330,9 @@ function addExtraViewCards(r) {
   }
 }
 
-function drawReport(view, r) {
+function drawReport(view, r, sideClip) {
   const f = r.fix;
+  const canPlay = !r.gate && sideClip && r.track?.length;
   view.innerHTML = `
   ${appbar("new report")}
   ${r.gate ? `
@@ -337,6 +347,23 @@ function drawReport(view, r) {
       <p><strong>Try:</strong> ${f.cue}</p>
       ${r.provisional ? `<p>The numbers below are shown without verdicts.</p>` : ""}
     </div>
+    ${canPlay ? `
+      <div class="sect">Your ride, measured</div>
+      <div class="glass player">
+        <div class="stagewrap">
+          <video id="mv" class="shot" playsinline muted loop></video>
+          <canvas id="mvc"></canvas>
+          <div class="mv-live mono"><span id="mvang">–</span></div>
+        </div>
+        <div class="mv-bar">
+          <button class="mv-play" id="mvplay" aria-label="Play">▶</button>
+          <input id="mvseek" type="range" min="0" max="1000" value="0">
+          <div class="mv-speeds">
+            ${[0.25, 0.5, 1].map((x) => `<button data-x="${x}" class="${x === 1 ? "on" : ""}">${x}×</button>`).join("")}
+          </div>
+        </div>
+        <figcaption>Knee angle, drawn on the joints the model found in each frame. Green in band, gold out.</figcaption>
+      </div>` : ""}
     ${r.keyframes?.length ? `
       <div class="sect">What we measured on</div>
       ${r.keyframes.map((k) => `
@@ -354,4 +381,72 @@ function drawReport(view, r) {
     <a class="btn" href="#/home">Done</a>`}
   <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes${
     r.capture?.offSquareDeg != null ? ` · camera about ${r.capture.offSquareDeg}° off square` : ""} · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}</div>`;
+  if (canPlay) wirePlayer(view, r, sideClip);
+}
+
+/* Plays the analysed section back with the measurement riding on the rider.
+   The track is frame-aligned to the clip, so at any moment we draw the joints
+   the model actually found nearest that time — and nothing when it found none,
+   which is the same rule the stills follow. */
+function wirePlayer(view, r, clip) {
+  const video = view.querySelector("#mv");
+  const canvas = view.querySelector("#mvc");
+  const live = view.querySelector("#mvang");
+  const playBtn = view.querySelector("#mvplay");
+  const seek = view.querySelector("#mvseek");
+  if (!video || !clip) return () => {};
+
+  const url = URL.createObjectURL(clip);
+  video.src = url;
+  const [t0, t1] = r.trim ?? [0, 0];
+  const track = r.track;
+  const ctx = canvas.getContext("2d");
+
+  function draw() {
+    const w = video.clientWidth, h = video.clientHeight;
+    if (!w || !h) return;
+    if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
+    ctx.clearRect(0, 0, w, h);
+    // No landmarks near this moment: draw nothing rather than a stale pose.
+    const f = overlayAt(track, video.currentTime);
+    if (!f) { live.textContent = "–"; return; }
+    const colour = f.inBand ? "#34D27B" : "#F2C230";
+    const pts = [f.j.hip, f.j.knee, f.j.ankle];
+    ctx.lineWidth = Math.max(3, w * 0.011);
+    ctx.lineJoin = ctx.lineCap = "round";
+    ctx.strokeStyle = colour;
+    ctx.beginPath();
+    pts.forEach((p, i) => (i ? ctx.lineTo(p.x * w, p.y * h) : ctx.moveTo(p.x * w, p.y * h)));
+    ctx.stroke();
+    ctx.fillStyle = colour;
+    for (const p of pts) { ctx.beginPath(); ctx.arc(p.x * w, p.y * h, ctx.lineWidth * 1.1, 0, Math.PI * 2); ctx.fill(); }
+    live.textContent = `${f.knee.toFixed(0)}°`;
+    live.style.color = colour;
+  }
+
+  let raf = null;
+  const loop = () => { draw(); if (!video.paused) { seek.value = String(((video.currentTime - t0) / Math.max(0.001, t1 - t0)) * 1000); raf = requestAnimationFrame(loop); } };
+
+  video.onloadedmetadata = () => { video.currentTime = t0; draw(); };
+  video.onseeked = draw;
+  video.ontimeupdate = draw;
+  playBtn.onclick = () => {
+    if (video.paused) { if (video.currentTime >= t1 - 0.05) video.currentTime = t0; video.play(); playBtn.textContent = "❚❚"; loop(); }
+    else { video.pause(); playBtn.textContent = "▶"; cancelAnimationFrame(raf); }
+  };
+  video.onplay = () => { playBtn.textContent = "❚❚"; loop(); };
+  video.onpause = () => { playBtn.textContent = "▶"; cancelAnimationFrame(raf); };
+  // Loop the trimmed section, not the whole clip.
+  const fence = () => { if (video.currentTime > t1) video.currentTime = t0; };
+  video.addEventListener("timeupdate", fence);
+  seek.oninput = () => { video.currentTime = t0 + (+seek.value / 1000) * (t1 - t0); draw(); };
+  for (const b of view.querySelectorAll(".mv-speeds button")) {
+    b.onclick = () => {
+      video.playbackRate = +b.dataset.x;
+      view.querySelectorAll(".mv-speeds button").forEach((o) => o.classList.toggle("on", o === b));
+    };
+  }
+  addEventListener("resize", draw);
+
+  return () => { cancelAnimationFrame(raf); video.pause(); video.removeAttribute("src"); URL.revokeObjectURL(url); };
 }

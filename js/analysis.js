@@ -221,17 +221,21 @@ async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read) {
     const end = Math.min(t1, dur || t1, t0 + seconds);
     const total = Math.max(1, Math.round((end - t0) * fps));
     const rows = [];
+    const stat = { sampled: 0, posed: 0, seekFails: 0, kept: 0, span: +(end - t0).toFixed(1) };
     let missed = 0;
     for (let t = t0, i = 0; t < end; t += 1 / fps, i++) {
+      stat.sampled++;
       if (!(await seekTo(video, t))) {
+        stat.seekFails++;
         if (++missed >= 5) break;        // the clip has stopped giving frames
         continue;
       }
       missed = 0;
       const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
-      if (p) { const row = read(p, sq, t); if (row) rows.push(row); }
+      if (p) { stat.posed++; const row = read(p, sq, t); if (row) { stat.kept++; rows.push(row); } }
       onProgress?.(i / total);
     }
+    rows.stat = stat;
     return rows;
   } finally { release(); }
 }
@@ -245,34 +249,57 @@ function fromVertical(top, bottom, inwardIsPositive) {
 
 const amplitude = (a) => Math.max(...a) - Math.min(...a);
 
+/* Which pose to draw at a given moment of playback, if any.
+   Returns null when the nearest analysed frame is too far away — the model
+   found nothing there, and a stale skeleton on a moving rider is exactly the
+   "drawing without a measurement" the rules forbid. */
+export function overlayAt(track, t, tol = 0.12) {
+  if (!track?.length) return null;
+  let lo = 0, hi = track.length - 1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (track[mid].t < t) lo = mid + 1; else hi = mid; }
+  const a = track[Math.max(0, lo - 1)], b = track[lo];
+  const f = Math.abs(a.t - t) <= Math.abs(b.t - t) ? a : b;
+  if (Math.abs(f.t - t) > tol) return null;
+  const [lo_, hi_] = BANDS.kneeBendBDC;
+  return { ...f, inBand: f.knee >= lo_ && f.knee <= hi_ };
+}
+
 /* FRONT VIEW — how far each knee wanders sideways over the stroke.
    Measured per leg as the ankle→knee line's lean from vertical, so it is
    independent of how far away the phone was. */
 export async function analyzeFrontClip(blob, trim, onProgress) {
   const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq) => {
-    // Only the joints this actually measures — knees and ankles. It used to
-    // demand the hips too and then never use them, which threw away frames.
-    const need = [25, 26, 27, 28];
-    if (need.some((i) => (p[i].visibility ?? 1) < CAPTURE.minJointVisibility)) return null;
+    /* Each leg stands on its own. Requiring both at once threw the whole frame
+       away whenever the far ankle passed behind the cranks — which is most of
+       the stroke — and one measured leg is still worth saying. */
+    const vis = (i) => (p[i].visibility ?? 1) >= CAPTURE.minJointVisibility;
+    const row = { vis: mean([25, 26, 27, 28].map((i) => p[i].visibility ?? 1)) };
     // Rider faces the camera: their left is on our right, so inward flips.
-    return {
-      left:  fromVertical(sq(p[25]), sq(p[27]), true),
-      right: fromVertical(sq(p[26]), sq(p[28]), false),
-    };
+    if (vis(25) && vis(27)) row.left = fromVertical(sq(p[25]), sq(p[27]), true);
+    if (vis(26) && vis(28)) row.right = fromVertical(sq(p[26]), sq(p[28]), false);
+    return (row.left != null || row.right != null) ? row : null;
   });
-  if (rows.length < 12 * 3) return { gate: "We couldn't see both legs clearly for long enough from the front. Check the framing and the light, then film again." };
 
-  const left = amplitude(rows.map((r) => r.left));
-  const right = amplitude(rows.map((r) => r.right));
-  const bigger = Math.max(left, right), smaller = Math.min(left, right);
-  const ratio = smaller > 0.5 ? bigger / smaller : null;
-  const looser = left >= right ? "left" : "right";
-  return {
-    kneeTravel: { left: +left.toFixed(1), right: +right.toFixed(1) },
-    asymmetry: ratio ? +ratio.toFixed(2) : null,
-    looser,
-    frames: rows.length,
-  };
+  const MIN = 12 * 2;                          // two seconds of a usable leg
+  const leftVals = rows.filter((r) => r.left != null).map((r) => r.left);
+  const rightVals = rows.filter((r) => r.right != null).map((r) => r.right);
+  const seen = { ...rows.stat, left: leftVals.length, right: rightVals.length,
+                 visibility: +mean(rows.length ? rows.map((r) => r.vis) : [0]).toFixed(2) };
+  if (leftVals.length < MIN && rightVals.length < MIN)
+    return { gate: "We couldn't hold either knee in view for long enough from the front. Frame both legs from the waist down, with the light in front of you, and film again.", seen };
+
+  const out = { seen, kneeTravel: {} };
+  if (leftVals.length >= MIN) out.kneeTravel.left = +amplitude(leftVals).toFixed(1);
+  if (rightVals.length >= MIN) out.kneeTravel.right = +amplitude(rightVals).toFixed(1);
+  const { left, right } = out.kneeTravel;
+  if (left != null && right != null) {
+    const bigger = Math.max(left, right), smaller = Math.min(left, right);
+    out.asymmetry = smaller > 0.5 ? +(bigger / smaller).toFixed(2) : null;
+    out.looser = left >= right ? "left" : "right";
+  } else {
+    out.oneLegOnly = left != null ? "left" : "right";
+  }
+  return out;
 }
 
 /* REAR VIEW — shoulder and pelvis rock, as the tilt of each line over the
@@ -280,20 +307,28 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
    the side view, which is the view that measures saddle height. */
 export async function analyzeRearClip(blob, trim, onProgress) {
   const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq) => {
-    // Shoulders and hips only. Filmed from behind the wheel the ankles are
-    // hidden by the bike, and requiring them gated out every usable frame.
-    const need = [11, 12, 23, 24];
-    if (need.some((i) => (p[i].visibility ?? 1) < CAPTURE.minJointVisibility)) return null;
+    // Shoulder line and hip line stand alone — a jersey hides hips far more
+    // often than shoulders, and shoulder rock on its own is still a finding.
+    const vis = (i) => (p[i].visibility ?? 1) >= CAPTURE.minJointVisibility;
     const tilt = (a, b) => deg(Math.atan2(sq(b).y - sq(a).y, Math.abs(sq(b).x - sq(a).x) + 1e-9));
-    return { shoulder: tilt(p[11], p[12]), pelvis: tilt(p[23], p[24]) };
+    const row = { vis: mean([11, 12, 23, 24].map((i) => p[i].visibility ?? 1)) };
+    if (vis(11) && vis(12)) row.shoulder = tilt(p[11], p[12]);
+    if (vis(23) && vis(24)) row.pelvis = tilt(p[23], p[24]);
+    return (row.shoulder != null || row.pelvis != null) ? row : null;
   });
-  if (rows.length < 12 * 3) return { gate: "We couldn't see your shoulders and hips clearly for long enough from behind. Light from the side — never a window straight behind you — then film again." };
 
-  return {
-    shoulderRock: +amplitude(rows.map((r) => r.shoulder)).toFixed(1),
-    pelvicRock: +amplitude(rows.map((r) => r.pelvis)).toFixed(1),
-    frames: rows.length,
-  };
+  const MIN = 12 * 2;
+  const sh = rows.filter((r) => r.shoulder != null).map((r) => r.shoulder);
+  const pv = rows.filter((r) => r.pelvis != null).map((r) => r.pelvis);
+  const seen = { ...rows.stat, shoulders: sh.length, pelvis: pv.length,
+                 visibility: +mean(rows.length ? rows.map((r) => r.vis) : [0]).toFixed(2) };
+  if (sh.length < MIN && pv.length < MIN)
+    return { gate: "We couldn't hold your shoulders or hips in view for long enough from behind. Stand the phone behind the rear wheel with light from the side, and film again.", seen };
+
+  const out = { seen };
+  if (sh.length >= MIN) out.shoulderRock = +amplitude(sh).toFixed(1);
+  if (pv.length >= MIN) out.pelvicRock = +amplitude(pv).toFixed(1);
+  return out;
 }
 
 export async function analyzeSideClip(blob, [t0, t1], onProgress) {
@@ -343,8 +378,12 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
       // Hip separation against trunk length — near zero when truly side-on.
       const trunk = Math.hypot(sho.x - hip.x, sho.y - hip.y);
       if (trunk > 1e-3) frames.hipSpread.push(Math.abs(sq(p[23]).x - sq(p[24]).x) / trunk);
+      // Raw (un-squared) coordinates travel with the row: drawing happens in
+      // image space, so the overlay can ride the clip frame by frame.
+      const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
       rows.push({
         t: times[i],                       // frames the model missed leave gaps; keep real time
+        j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
         kneeBend: 180 - angleAt(hip, knee, ankle),
         hip: angleAt(sho, hip, knee),
         torso: deg(Math.atan2(Math.abs(sho.y - hip.y), Math.abs(sho.x - hip.x) + 1e-9)),
@@ -440,9 +479,16 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     };
   }
 
+  /* The clip itself, frame-aligned. Lets the report play the ride back with
+     the angle moving on the rider instead of two frozen stills. Held in
+     memory only — it is derived from video, so it never goes to the server. */
+  const track = rows.map((r) => ({ t: +r.t.toFixed(3), j: r.j, knee: +r.kneeBend.toFixed(1) }));
+
   return {
     capture,
     provisional,
+    track,
+    trim: [t0, t1],
     keyframes,
     strokes: bdc.length,
     cadence,
