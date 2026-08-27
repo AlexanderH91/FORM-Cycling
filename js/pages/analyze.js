@@ -12,11 +12,14 @@ import { appbar } from "../ui.js";
 
 const VIEWS = [
   { key: "side",  label: "Side",   need: "required",
-    hint: "Phone at saddle height, 2–3 m away — whole bike and rider in frame. This is the view we measure." },
+    hint: "Phone at saddle height, 2–3 m away — whole bike and rider in frame. This is the view we measure.",
+    title: "Side view", gives: "saddle height, hip fold, foot angle, cadence and fore/aft" },
   { key: "front", label: "Front",  need: "optional",
-    hint: "Phone at bar height, straight ahead — both knees visible." },
+    hint: "Phone at bar height, straight ahead — both knees visible.",
+    title: "Front view", gives: "whether your knees track in or out, which no other angle can see" },
   { key: "rear",  label: "Behind", need: "optional",
-    hint: "Behind the rear wheel, light from the side — never a window straight behind you." },
+    hint: "Behind the rear wheel, light from the side — never a window straight behind you.",
+    title: "From behind", gives: "shoulder and pelvis rock, and whether you sit level" },
 ];
 
 /* Record at a bitrate that survives a bent knee against a dark bike. The
@@ -78,6 +81,7 @@ function drawCapture(view, user, state) {
     <input type="file" accept="video/*" class="hidden" id="file">
   </div>
   <div class="err" id="err"></div>
+  <p class="hint" id="missing"></p>
   <button class="btn" id="go" disabled></button>
   <div class="footnote">Filming and analysis both happen on your phone · recording stops on its own after ${Math.round(MAX_RECORD_MS / 60000)} minutes</div>`;
 
@@ -114,6 +118,14 @@ function drawCapture(view, user, state) {
     const ready = state.clips.side && state.trims.side;
     goBtn.disabled = !ready || isRecording();
     goBtn.textContent = ready ? "Analyze this ride →" : "Film the side view to analyze";
+
+    /* Every review of a rival app lands on "side view only". FORM films three
+       — but only if the rider knows what the other two are worth, said here
+       rather than in a footnote under the report. */
+    const short = VIEWS.filter((v) => v.need === "optional" && !state.clips[v.key]);
+    $("#missing").textContent = ready && short.length
+      ? `Side only so far. ${short.map((v) => `${v.label}: ${v.gives}`).join(". ")}.`
+      : "";
   }
 
   function showClip(key) {
@@ -276,7 +288,7 @@ async function runAnalysis(view, user, state) {
     const report = await analyzeSideClip(
       state.clips.side, state.trims.side,
       (pct, msg) => { bar.style.width = pct + "%"; if (msg) stage.textContent = msg; },
-      history);
+      { history, heightCm: +localStorage.getItem("form_height_cm") || null });
     report.viewsCaptured = Object.keys(state.clips);
 
     /* The extra views never overturn the side view — they add their own
@@ -316,6 +328,35 @@ async function runAnalysis(view, user, state) {
 
 /* Cards for the extra views. No verdict word where the project has no cited
    band — the number and its meaning, and nothing implied beyond it. */
+/* What each view is for. Every review of a rival app lands on the same
+   sentence — "analyses from one side only, does not assess front or rear" —
+   and FORM films all three. That advantage is worth nothing if a view the
+   rider skipped just leaves a silent hole in the report, which is what was
+   happening: no card, no mention, only a line of footnote. */
+function viewsBlock(r) {
+  const filmed = new Set(r.viewsCaptured ?? ["side"]);
+  const rows = VIEWS.map((v) => {
+    const res = v.key === "side" ? r : r[v.key];
+    const state = !filmed.has(v.key) ? "missing" : res?.gate ? "gated" : "done";
+    const detail = state === "done" ? v.gives
+      : state === "gated" ? res.gate
+      : `Not filmed this time — it measures ${v.gives}.`;
+    return `<div class="viewrow"><span class="vdot ${state}"></span>
+      <div><b>${v.title}</b><br><span class="vnote">${detail}</span></div></div>`;
+  }).join("");
+  const missing = VIEWS.filter((v) => !filmed.has(v.key));
+  return `
+  <div class="sect">What this report is based on</div>
+  <div class="glass card">${rows}
+    ${missing.length ? `<a class="btn secondary" href="#/analyze" style="margin-top:12px">Film ${
+      missing.map((v) => v.label.toLowerCase()).join(" and ")} next</a>` : ""}
+  </div>
+  <div class="glass card"><h3>What FORM does not measure</h3>
+    <p>Cleat position and saddle tilt need the hardware in shot at a resolution
+    phone video does not give — FORM leaves them alone rather than guessing.
+    Everything above comes from your body, not your bike.</p></div>`;
+}
+
 function addExtraViewCards(r) {
   // A gate says what it saw, so a failure is diagnosable instead of mysterious.
   const why = (seen) => !seen ? "" :
@@ -370,7 +411,7 @@ function addExtraViewCards(r) {
   }
 }
 
-function drawReport(view, r, sideClip) {
+export function drawReport(view, r, sideClip) {
   const f = r.fix;
   const canPlay = !r.gate && sideClip && r.track?.length;
   view.innerHTML = `
@@ -418,6 +459,7 @@ function drawReport(view, r, sideClip) {
       <div class="glass card"><div class="row"><h3>${c.name}</h3>
         <div class="val">${c.value} ${c.verdict ? `<em>${c.verdict}</em>` : ""}</div></div>
         <p>${c.note}</p></div>`).join("")}
+    ${viewsBlock(r)}
     <a class="btn secondary coach-cta" href="#/coach?about=report">
       <span class="cmic"></span>Talk about this ride</a>
     <a class="btn" href="#/home">Done</a>`}

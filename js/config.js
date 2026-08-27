@@ -5,7 +5,7 @@
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
 export const VERSION = "v2";
-export const BUILD = "2026-08-27-k";
+export const BUILD = "2026-08-27-l";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -42,6 +42,20 @@ export const CAPTURE = {
   // average, not this rider — which is why it grades rather than measures.
   hipWidthOverTrunk: 0.55,
 };
+
+/* Turning pixels into centimetres needs one known length. The thigh is the
+   best candidate on a seated rider: it is long, it is squarely side-on, and
+   both ends are joints the model locates well. The ratio is a population
+   average from the standard anthropometric segment tables (Drillis & Contini),
+   NOT this rider — so any centimetre figure derived from it is approximate,
+   and is labelled that way wherever it is shown. */
+export const FEMUR_OVER_HEIGHT = 0.245;
+
+/* Where the pedal axle sits along the foot, as a fraction from the toe back
+   towards the heel. Cleats are normally set with the axle under the ball of
+   the foot, which lands about here. The model gives toe and heel; it does not
+   see the pedal. */
+export const AXLE_ALONG_FOOT = 0.28;
 
 /* How far a reading can be off for reasons that averaging more pedal strokes
    will never fix: where the phone was stood, lens distortion, and the pose

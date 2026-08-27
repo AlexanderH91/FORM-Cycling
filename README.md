@@ -179,3 +179,22 @@ That is why rides are pooled. A single ride that lands a degree outside the
 band is a coin flip and is reported as one; three or more that agree are a
 position, and get a verdict — including "you ride just at the edge of the
 band", which is a finding rather than a failure to measure.
+
+## Where rival apps get marked down
+
+Reviews of AI bike-fit apps land on the same short list. FORM's answer to each:
+
+| What reviewers criticise | FORM |
+|---|---|
+| "Analyses from one side only, doesn't assess front or rear" | Films three views in one session. Every report names which views it stands on, and what an unfilmed one would have added — a skipped view is never a silent hole. |
+| "Not great for more complex issues like the knees" | The front view measures each knee's travel from vertical, per leg. |
+| "Doesn't consider saddle position fore and aft" | Knee-over-axle at three o'clock, in thigh-lengths, and in centimetres when height is known. |
+| "Can't be clear whether my saddle is too high or not" | Rides are pooled; three that agree settle what one cannot. |
+| "Cleat positioning is outside its scope — a missed opportunity" | Still outside FORM's scope, but the report says so plainly rather than leaving a hole. |
+| "Doesn't check saddle tilt" | Same — stated, not silently skipped. |
+
+The fore/aft figure rests on two declared assumptions: `FEMUR_OVER_HEIGHT`
+(population thigh proportion, used to reach centimetres) and `AXLE_ALONG_FOOT`
+(where the pedal axle sits along a foot the model can see but a pedal it
+cannot). Both are in `js/config.js`, and the card reports a position with no
+verdict word, because a reference position is not a target.

@@ -1,4 +1,4 @@
-import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES } from "./config.js";
+import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FEMUR_OVER_HEIGHT, AXLE_ALONG_FOOT } from "./config.js";
 
 /* On-device side-view analysis.
    MediaPipe Pose Landmarker (WASM) runs in the browser; the video never
@@ -95,6 +95,42 @@ export function spread(idxs, budget) {
   return Array.from({ length: budget },
     (_, i) => idxs[Math.round((i * (idxs.length - 1)) / (budget - 1))]);
 }
+
+/* SADDLE FORE/AFT — the gap every review of these apps points at.
+   At the three o'clock crank position, fitters look at where the front of the
+   knee sits relative to the pedal axle. Finding that moment needs no crank:
+   the ankle is furthest forward exactly when the crank is horizontal and
+   forward. The axle itself is invisible to the model, so it is placed along
+   the foot at AXLE_ALONG_FOOT. Both of those are assumptions, which is why
+   this reports a position and never a verdict.
+
+   Returns the offset in thigh-lengths, which needs no assumption about the
+   rider at all; centimetres are added later only if their height is known. */
+export function kneeOverAxle(rows, fps) {
+    // Which way the bike points: on a rider reaching for the bars, the
+    // shoulders are ahead of the hips.
+    const lean = median(rows.map((r) => r.x.sho - r.x.hip));
+    if (!Number.isFinite(lean) || Math.abs(lean) < 1e-3) return null;
+    const forward = Math.sign(lean);
+    const reach = rows.map((r) => forward * r.x.ankle);
+    const three = findPeaks(reach, fps * 0.45, 0.25)
+      .filter((i) => rows[i].conf >= CAPTURE.minJointVisibility);
+    if (three.length < 3) return null;
+
+    const offs = three.map((i) => {
+      const j = rows[i].x;
+      const axle = j.toe + AXLE_ALONG_FOOT * (j.heel - j.toe);
+      return forward * (j.knee - axle);        // + = knee ahead of the axle
+    });
+    const femur = median(three.map((i) => rows[i].femur));
+    if (!(femur > 1e-3)) return null;
+    return {
+      // in thigh-lengths, which needs no assumption about the rider at all
+      ofFemur: median(offs) / femur,
+      sd: sd(offs) / femur,
+      n: offs.length,
+    };
+  }
 
 export function dominantSide(frames) {
   const lWins = frames.filter((f) => sideVis(f.L) >= sideVis(f.R)).length;
@@ -517,7 +553,8 @@ export async function analyzeRearClip(blob, trim, onProgress) {
   return out;
 }
 
-export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) {
+export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
+  const { history = [], heightCm = null } = opts;
   onProgress(3, "Loading the pose model onto your phone…");
   const lm = await getLandmarker();
 
@@ -586,6 +623,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
         torso: deg(Math.atan2(Math.abs(sho.y - hip.y), Math.abs(sho.x - hip.x) + 1e-9)),
         toeDown: -deg(Math.atan2(heel.y - toe.y, Math.abs(toe.x - heel.x) + 1e-9)),
         ankleY: ankle.y,                   // y only — unaffected by the x correction
+        /* Square-corrected horizontals, kept for the fore/aft measurement.
+           These never leave this function — only the derived numbers do. */
+        x: { hip: hip.x, knee: knee.x, ankle: ankle.x, sho: sho.x, heel: heel.x, toe: toe.x },
+        femur: Math.hypot(knee.x - hip.x, knee.y - hip.y),
       });
   }
 
@@ -640,6 +681,22 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
   onProgress(88, "Re-reading those strokes closely…");
   let refined = 0;
   try { refined = await refine(bdc); } catch { /* the sweep's numbers still stand */ }
+
+  /* SADDLE FORE/AFT — the gap every review of these apps points at.
+     At the three o'clock crank position, fitters look at where the front of
+     the knee sits relative to the pedal axle. Finding that moment needs no
+     crank: the ankle is furthest forward exactly when the crank is horizontal
+     and forward. The axle itself is not visible to the model, so it is placed
+     along the foot at AXLE_ALONG_FOOT, and the result is scaled to
+     centimetres through the rider's thigh — both stated assumptions, which is
+     why this reports a position and never a verdict. */
+  const foreaft = kneeOverAxle(rows, FPS);
+  if (foreaft && heightCm > 0) {
+    // One known length turns thigh-lengths into centimetres. The ratio is a
+    // population average, so this is approximate and says so on the card.
+    foreaft.cm = foreaft.ofFemur * FEMUR_OVER_HEIGHT * heightCm;
+    foreaft.sdCm = foreaft.sd * FEMUR_OVER_HEIGHT * heightCm;
+  }
 
   onProgress(92, "Averaging across strokes…");
 
@@ -799,6 +856,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
     /* Which leg every number here came from, and how many frames the model
        would have put on the other one. A high flip count on a side-on clip
        means the camera was not square. */
+    foreAft: foreaft,
     leg: side === "L" ? "left" : "right",
     legFlips: flipped,
     // How many of the measured strokes were re-read with the accurate model.
@@ -829,6 +887,19 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
         note: `Band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}° toe-down at the bottom. ±${toeBDC.sd.toFixed(1)}° across your strokes.` }] : []),
       ...(hipTDC ? [{ name: "Hip fold at the top", value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
         note: `Fitting window ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° depending on flexibility. ±${hipTDC.sd.toFixed(1)}° across your strokes.` }] : []),
+      /* Reported as a position, never as a verdict: knee-over-axle is where
+         fitters START, not where riders should end up, and the two assumptions
+         under the centimetre figure are named rather than hidden. */
+      ...(foreaft ? [{
+        name: "Knee over the pedal, 3 o'clock",
+        value: foreaft.cm != null
+          ? `${foreaft.cm > 0 ? "+" : ""}${foreaft.cm.toFixed(1)} cm`
+          : `${foreaft.ofFemur > 0 ? "+" : ""}${(foreaft.ofFemur * 100).toFixed(0)}% of thigh`,
+        note: `Plus means your knee is ahead of the pedal axle with the cranks level. Fitters commonly start with it roughly over the axle and move from there — it is a reference position, not a target, and no verdict is given on it. Measured over ${foreaft.n} strokes.${
+          foreaft.cm != null
+            ? " Centimetres are approximate: scaled from your height through an average thigh proportion, and the axle is placed under the ball of your foot rather than seen."
+            : " Add your height on the Me screen to see this in centimetres."}`,
+      }] : []),
       { name: "Cadence", value: cadence.toFixed(0) + " rpm", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Research sweet spot ${BANDS.cadence[0]}–${BANDS.cadence[1]} rpm for experienced riders.` },
       { name: "Torso angle", value: torso.value.toFixed(0) + "°", note: "Above horizontal. What it's worth in watts depends on speed — ride-file pairing comes next." },
     ]),
