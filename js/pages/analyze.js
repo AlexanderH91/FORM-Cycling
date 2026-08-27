@@ -19,6 +19,14 @@ const VIEWS = [
     hint: "Behind the rear wheel, light from the side — never a window straight behind you." },
 ];
 
+/* Record at a bitrate that survives a bent knee against a dark bike. The
+   default is tuned for video calls and smears exactly the edges we measure. */
+function recorderOptions() {
+  const wants = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp9", "video/webm"];
+  const mimeType = wants.find((t) => window.MediaRecorder?.isTypeSupported?.(t));
+  return { videoBitsPerSecond: 12_000_000, ...(mimeType ? { mimeType } : {}) };
+}
+
 const clock = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStart(2, "0")}`;
 const viewOf = (k) => VIEWS.find((v) => v.key === k);
 
@@ -48,7 +56,7 @@ function drawCapture(view, user, state) {
   ${appbar("capture")}
   <div class="stage glass">
     <video id="cam" class="shot" playsinline muted autoplay></video>
-    <video id="play" class="shot hidden" playsinline muted loop controls></video>
+    <video id="play" class="shot hidden" playsinline muted loop controls preload="auto"></video>
     <div class="stage-msg hidden" id="stagemsg"></div>
     <div class="rec-pill hidden" id="recpill"><span class="rec-dot"></span><span id="rectime">0:00</span></div>
   </div>
@@ -112,7 +120,12 @@ function drawCapture(view, user, state) {
     const url = state.urls[key];
     if (!url) return;
     play.src = url;
-    play.onloadedmetadata = () => { syncTrim(play, view, state, key).then(paint); };
+    play.onloadedmetadata = () => {
+      // Show the footage, not a black rectangle: seeking to a time the element
+      // already sits on fires no seek, so nudge off zero to force a frame.
+      play.currentTime = 0.03;
+      syncTrim(play, view, state, key).then(paint);
+    };
   }
 
   function loadClip(key, blob) {
@@ -128,8 +141,19 @@ function drawCapture(view, user, state) {
   async function startCamera() {
     const msg = $("#stagemsg");
     try {
-      state.stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "environment", width: { ideal: 1280 } }, audio: false });
+      /* Ask for the best the camera will give: pose accuracy and the replay
+         both live off this footage. Every constraint is "ideal" — a hard one
+         makes getUserMedia throw on a device that cannot meet it, and a
+         lower-resolution clip beats no clip. Fall back to a plain rear camera
+         if the request is refused outright. */
+      const best = {
+        facingMode: "environment",
+        width: { ideal: 1920 }, height: { ideal: 1080 },
+        frameRate: { ideal: 60 },
+      };
+      state.stream = await navigator.mediaDevices
+        .getUserMedia({ video: best, audio: false })
+        .catch(() => navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false }));
       cam.srcObject = state.stream;
       await cam.play().catch(() => {});
       msg.classList.add("hidden");
@@ -155,7 +179,7 @@ function drawCapture(view, user, state) {
     if (!state.stream) return;
     err.textContent = "";
     const key = state.angle, chunks = [];
-    const recorder = new MediaRecorder(state.stream);
+    const recorder = new MediaRecorder(state.stream, recorderOptions());
     recorder.ondataavailable = (ev) => chunks.push(ev.data);
     recorder.onstop = () => {
       clearTimeout(state.timer); clearInterval(state.tick);
@@ -351,7 +375,7 @@ function drawReport(view, r, sideClip) {
       <div class="sect">Your ride, measured</div>
       <div class="glass player">
         <div class="stagewrap">
-          <video id="mv" class="shot" playsinline muted loop></video>
+          <video id="mv" class="shot" playsinline muted loop preload="auto"></video>
           <canvas id="mvc"></canvas>
           <div class="mv-live mono"><span id="mvang">–</span></div>
         </div>
@@ -384,6 +408,17 @@ function drawReport(view, r, sideClip) {
   if (canPlay) wirePlayer(view, r, sideClip);
 }
 
+/* Where the picture actually sits inside its box under object-fit: contain.
+   Landmarks are normalised to the video frame, so without this the skeleton
+   lands wherever the letterbox isn't. */
+export function fitContain(boxW, boxH, vidW, vidH) {
+  if (!boxW || !boxH) return null;
+  if (!vidW || !vidH) return { x: 0, y: 0, w: boxW, h: boxH };
+  const scale = Math.min(boxW / vidW, boxH / vidH);
+  const w = vidW * scale, h = vidH * scale;
+  return { x: (boxW - w) / 2, y: (boxH - h) / 2, w, h };
+}
+
 /* Plays the analysed section back with the measurement riding on the rider.
    The track is frame-aligned to the clip, so at any moment we draw the joints
    the model actually found nearest that time — and nothing when it found none,
@@ -402,24 +437,42 @@ function wirePlayer(view, r, clip) {
   const track = r.track;
   const ctx = canvas.getContext("2d");
 
+  /* Landmarks are normalised to the VIDEO FRAME, not to the element. If the
+     frame is letterboxed inside its box — which it is the moment the clip's
+     aspect and the card's differ — mapping straight onto the element puts the
+     skeleton somewhere the rider is not. Find where the picture actually sits
+     and map into that. */
+  const contentRect = () =>
+    fitContain(video.clientWidth, video.clientHeight, video.videoWidth, video.videoHeight);
+
   function draw() {
-    const w = video.clientWidth, h = video.clientHeight;
-    if (!w || !h) return;
-    if (canvas.width !== w) { canvas.width = w; canvas.height = h; }
-    ctx.clearRect(0, 0, w, h);
+    const box = contentRect();
+    if (!box) return;
+    const bw = video.clientWidth, bh = video.clientHeight;
+    const dpr = Math.min(3, window.devicePixelRatio || 1);
+    // Height matters as much as width — checking only width left a stale
+    // bitmap once the real aspect arrived, and every point drew low.
+    if (canvas.width !== Math.round(bw * dpr) || canvas.height !== Math.round(bh * dpr)) {
+      canvas.width = Math.round(bw * dpr);
+      canvas.height = Math.round(bh * dpr);
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, bw, bh);
+
     // No landmarks near this moment: draw nothing rather than a stale pose.
     const f = overlayAt(track, video.currentTime);
     if (!f) { live.textContent = "–"; return; }
+    const at = (p) => [box.x + p.x * box.w, box.y + p.y * box.h];
     const colour = f.inBand ? "#34D27B" : "#F2C230";
-    const pts = [f.j.hip, f.j.knee, f.j.ankle];
-    ctx.lineWidth = Math.max(3, w * 0.011);
+    const pts = [f.j.hip, f.j.knee, f.j.ankle].map(at);
+    ctx.lineWidth = Math.max(3, box.w * 0.011);
     ctx.lineJoin = ctx.lineCap = "round";
     ctx.strokeStyle = colour;
     ctx.beginPath();
-    pts.forEach((p, i) => (i ? ctx.lineTo(p.x * w, p.y * h) : ctx.moveTo(p.x * w, p.y * h)));
+    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
     ctx.stroke();
     ctx.fillStyle = colour;
-    for (const p of pts) { ctx.beginPath(); ctx.arc(p.x * w, p.y * h, ctx.lineWidth * 1.1, 0, Math.PI * 2); ctx.fill(); }
+    for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, ctx.lineWidth * 1.1, 0, Math.PI * 2); ctx.fill(); }
     live.textContent = `${f.knee.toFixed(0)}°`;
     live.style.color = colour;
   }
@@ -427,7 +480,14 @@ function wirePlayer(view, r, clip) {
   let raf = null;
   const loop = () => { draw(); if (!video.paused) { seek.value = String(((video.currentTime - t0) / Math.max(0.001, t1 - t0)) * 1000); raf = requestAnimationFrame(loop); } };
 
-  video.onloadedmetadata = () => { video.currentTime = t0; draw(); };
+  video.onloadedmetadata = () => {
+    // Nudge off the exact start: seeking to a time it already sits on fires no
+    // seek, so the element stays black behind a play button.
+    video.currentTime = t0 + 0.03;
+    draw();
+  };
+  video.onloadeddata = draw;
+  video.onresize = draw;
   video.onseeked = draw;
   video.ontimeupdate = draw;
   playBtn.onclick = () => {
