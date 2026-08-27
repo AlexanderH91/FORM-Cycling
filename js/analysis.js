@@ -9,7 +9,12 @@ import { BANDS, CAPTURE, ANALYSIS, NO_BAND_REASON } from "./config.js";
    bands than bike fit does. */
 
 const MP_WASM = new URL("../assets/mp/", import.meta.url).href;
-const MP_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+/* Vendored, not fetched. The WASM was already local; the model was not, which
+   meant the one claim this app makes about itself — that analysis happens on
+   your phone — still depended on a Google CDN being reachable at the moment you
+   pressed Analyze. On a treadmill in a gym basement that is exactly when it
+   isn't. Both halves now ship with the app. */
+const MP_MODEL = new URL("../assets/mp/pose_landmarker_lite.task", import.meta.url).href;
 
 let landmarkerPromise = null;
 async function getLandmarker() {
@@ -133,7 +138,7 @@ const SEEN = (pt) => (pt?.visibility ?? 1) > 0.5;
 /* Grab the frame a number actually came from and draw that number on it.
    `draw` returns false when the joints it needs are not visible in this exact
    frame — then the still is shown with nothing drawn rather than a guess. */
-async function keyframe(video, lm, t, draw, maxW = 720) {
+async function keyframe(video, lm, t, draw, maxW = 720, side = null) {
   if (!(await seekTo(video, t))) return null;   // no frame, no drawing
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return null;
@@ -143,7 +148,11 @@ async function keyframe(video, lm, t, draw, maxW = 720) {
   const ctx = c.getContext("2d");
   ctx.drawImage(video, 0, 0, c.width, c.height);
   const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
-  const drawn = p ? draw(ctx, pickSide(p), c.width, c.height) !== false : false;
+  const joints = !p ? null
+    : side === "L" ? { hip: p[23], knee: p[25], ankle: p[27], sho: p[11], heel: p[29], toe: p[31] }
+    : side === "R" ? { hip: p[24], knee: p[26], ankle: p[28], sho: p[12], heel: p[30], toe: p[32] }
+    : pickSide(p);
+  const drawn = joints ? draw(ctx, joints, c.width, c.height) !== false : false;
   return { src: c.toDataURL("image/jpeg", 0.82), drawn };
 }
 
@@ -379,6 +388,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   for (let t = t0; t < end; t += 1 / FPS) times.push(t);
 
   const rows = [];
+  const raws = [];                       // both sides, before the clip picks one
+  let visL = 0, visR = 0;
   let missedSeeks = 0;
   const frames = { sampled: 0, seen: 0, clipped: 0, vis: [], hipSpread: [] };
   const EDGE = 0.02;                       // a joint this close to the border is cut off
@@ -393,34 +404,50 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     frames.sampled++;
     if (p) {
       frames.seen++;
-      const raw = pickSide(p);
-      const hip = sq(raw.hip), knee = sq(raw.knee), ankle = sq(raw.ankle);
-      const sho = sq(raw.sho), heel = sq(raw.heel), toe = sq(raw.toe);
-
-      const used = [raw.hip, raw.knee, raw.ankle, raw.sho];
-      frames.vis.push(mean(used.map((j) => j.visibility ?? 1)));
-      if (used.some((j) => j.x < EDGE || j.x > 1 - EDGE || j.y < EDGE || j.y > 1 - EDGE)) frames.clipped++;
-      const trunk = Math.hypot(sho.x - hip.x, sho.y - hip.y);
-      if (trunk > 1e-3) frames.hipSpread.push(Math.abs(sq(p[23]).x - sq(p[24]).x) / trunk);
-
-      const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
-      rows.push({
-        t: times[i],                     // frames the model missed leave gaps; keep real time
-        j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
-        conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
-        kneeFlex: 180 - angleAt(hip, knee, ankle),
-        /* Direction of travel is not known yet — the runner may face either way.
-           Store the raw components and sign them once, after the whole clip has
-           voted on which way "forward" is. */
-        leanX: sho.x - hip.x, leanY: hip.y - sho.y,
-        shankX: ankle.x - knee.x, shankY: ankle.y - knee.y,
-        toeAhead: toe.x - heel.x,
-        legLen: Math.hypot(hip.x - ankle.x, hip.y - ankle.y),
-        hipY: hip.y,
-        ankleY: ankle.y,                 // y only — unaffected by the x correction
-      });
+      /* Keep BOTH sides and decide later. Which leg the camera saw better is a
+         fact about where the phone stood, not about this frame — but running
+         legs scissor, so a per-frame choice flips sides mid-stride and scrambles
+         the very signal the stride is measured from. The whole clip votes once. */
+      const L = { hip: p[23], knee: p[25], ankle: p[27], sho: p[11], heel: p[29], toe: p[31] };
+      const R = { hip: p[24], knee: p[26], ankle: p[28], sho: p[12], heel: p[30], toe: p[32] };
+      visL += mean([L.hip, L.knee, L.ankle, L.sho].map((j) => j.visibility ?? 1));
+      visR += mean([R.hip, R.knee, R.ankle, R.sho].map((j) => j.visibility ?? 1));
+      raws.push({ t: times[i], L, R, hips: [p[23], p[24]] });
     }
     onProgress(8 + (78 * i) / times.length);
+  }
+
+  // One side, for the whole clip.
+  const nearSide = visL >= visR ? "L" : "R";
+  const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
+  for (const r of raws) {
+    const raw = r[nearSide];
+    const hip = sq(raw.hip), knee = sq(raw.knee), ankle = sq(raw.ankle);
+    const sho = sq(raw.sho), heel = sq(raw.heel), toe = sq(raw.toe);
+
+    const used = [raw.hip, raw.knee, raw.ankle, raw.sho];
+    frames.vis.push(mean(used.map((j) => j.visibility ?? 1)));
+    if (used.some((j) => j.x < EDGE || j.x > 1 - EDGE || j.y < EDGE || j.y > 1 - EDGE)) frames.clipped++;
+    const trunk = Math.hypot(sho.x - hip.x, sho.y - hip.y);
+    if (trunk > 1e-3) frames.hipSpread.push(Math.abs(sq(r.hips[0]).x - sq(r.hips[1]).x) / trunk);
+
+    rows.push({
+      t: r.t,                            // frames the model missed leave gaps; keep real time
+      j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
+      conf: mean(used.map((j) => j.visibility ?? 1)),
+      kneeFlex: 180 - angleAt(hip, knee, ankle),
+      /* Direction of travel is not known yet — the runner may face either way.
+         Store the raw components and sign them once, after the whole clip has
+         voted on which way "forward" is. */
+      leanX: sho.x - hip.x, leanY: hip.y - sho.y,
+      shankX: ankle.x - knee.x, shankY: ankle.y - knee.y,
+      toeAhead: toe.x - heel.x,
+      legLen: Math.hypot(hip.x - ankle.x, hip.y - ankle.y),
+      // how far the foot is ahead of the hip: forward once per stride
+      swing: ankle.x - hip.x,
+      hipY: hip.y,
+      ankleY: ankle.y,                   // y only — unaffected by the x correction
+    });
   }
   const capture = gradeCapture(frames);
   // Rule 4: a failed read is the whole story — no numbers travel with it.
@@ -438,8 +465,30 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     r.shank = deg(Math.atan2(fwd * r.shankX, Math.max(1e-9, r.shankY)));
   }
 
-  // The near ankle is lowest when that foot is on the belt: one contact per stride.
+  /* The stride comes from the near ankle's height: it is lowest when that foot
+     is on the belt, and that frame is the contact every at-contact number is
+     measured on.
+
+     A cadence that is out by a factor of two is the one error a runner has no
+     way to catch — it looks like a plausible number for somebody. So a second,
+     independent estimate is taken from the ankle's horizontal reach past the
+     hip, which also swings forward exactly once per stride. The two are never
+     combined. They are compared, and if they disagree by about a factor of two
+     then one of them has counted steps rather than strides, with no way to tell
+     which from the inside — so the read is refused instead of reported. */
+  const rowT = rows.map((r) => r.t);
   const ay = rows.map((r) => r.ankleY);
+  const swing = rows.map((r) => r.swing);
+
+  /* The runner's own leg, near full extension — a body-scale ruler that needs
+     no tape measure. Everything scale-free below divides by it. */
+  const legLen = quantile(rows.map((r) => r.legLen), 0.9);
+  const swingRange = Math.max(...swing) - Math.min(...swing);
+  if (!(legLen > 1e-4) || swingRange < 0.12 * legLen) {
+    release();
+    return { gate: "We could see you, but your legs barely crossed the frame — from this angle we can't tell one stride from the next. Film square to the side of the treadmill, with your whole body in view.", capture };
+  }
+
   const contacts = findPeaks(ay, FPS * 0.28, 0.3);
   if (contacts.length < ANALYSIS.minStrides) {
     release();
@@ -449,9 +498,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   /* Row indices skip any frame the model could not read, so take the stride
      period from the frames' own timestamps rather than assuming none were lost.
      One ankle's contacts are strides; cadence is quoted in steps, so it is
-     twice the stride rate. Getting that factor wrong would put every runner
-     exactly one octave out. */
-  const contactTimes = refineContacts(ay, rows.map((r) => r.t), contacts, FPS);
+     twice the stride rate. */
+  const contactTimes = refineContacts(ay, rowT, contacts, FPS);
   let intervals = contactTimes.slice(1)
     .map((v, i) => v - contactTimes[i])
     .filter((s) => s > 0.2 && s < 1.6);
@@ -466,6 +514,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
 
   const strideT = mean(intervals);
   const cadence = 120 / strideT;
+
   /* Averaging many intervals recovers the timing, but their spread still
      carries the sampling grid's own variance. Taking it back out leaves the
      runner plus whatever the landmarks add — and never goes below zero. */
@@ -480,6 +529,22 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
      running unevenly. */
   const cadenceSem = cadenceSd / Math.sqrt(intervals.length);
 
+  /* The octave cross-check. The swing reaches forward once per stride, exactly
+     as the ankle drops once per stride, so on a clip we can read at all the two
+     periods agree. A ratio near two means one of them is counting steps. */
+  const swingPeaks = findPeaks(swing, FPS * 0.28, 0.25);
+  if (swingPeaks.length >= 4) {
+    const st = refineContacts(swing, rowT, swingPeaks, FPS);
+    const iv = st.slice(1).map((v, i) => v - st[i]).filter((x) => x > 0.2 && x < 1.6);
+    if (iv.length >= 3) {
+      const ratio = mean(iv) / strideT;
+      if ((ratio > 1.7 && ratio < 2.4) || (ratio > 0.42 && ratio < 0.59)) {
+        release();
+        return { gate: "Two ways of counting your stride disagreed by a factor of two, so we can't tell your steps from your strides in this clip. Film square to the side of the treadmill, with your legs clearly against the background, and try again.", capture };
+      }
+    }
+  }
+
   /* A reported angle is the MEDIAN of the strides that were clearly seen, not
      the mean of every frame. One frame of bad landmarks drags an average, and
      the average is what the fix gets prescribed from. */
@@ -493,11 +558,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   const kneeAtContact = stat(contacts, "kneeFlex");
   const shankAtContact = stat(contacts, "shank");
 
-  /* Vertical oscillation, measured against the runner's own leg. Taking a
-     high percentile of hip-to-ankle distance gives the leg near full extension,
-     which is a stable body-scale ruler; dividing by it makes the number
-     scale-free, so it needs no tape measure and no assumed proportions. */
-  const legLen = quantile(rows.map((r) => r.legLen), 0.9);
+  /* Vertical oscillation, against the runner's own leg (measured above), so
+     the number is scale-free — no tape measure, no assumed proportions. */
   const perStrideVO = [];
   for (let i = 1; i < contacts.length; i++) {
     const seg = rows.slice(contacts[i - 1], contacts[i]).map((r) => r.hipY);
@@ -597,7 +659,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
         if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
         limb(ctx, [j.hip, j.knee, j.ankle], CHALK, w, h);
         tag(ctx, `${rows[cRow].kneeFlex.toFixed(0)}°`, j.knee, CHALK, w, h);
-      });
+      }, 720, nearSide);
       if (shot) keyframes.push({
         ...shot, label: "The moment you land",
         caption: shot.drawn
@@ -613,7 +675,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
       if (!SEEN(j.sho) || !SEEN(j.hip)) return false;
       limb(ctx, [j.sho, j.hip], leanOk ? IN_BAND : OUT_OF_BAND, w, h);
       tag(ctx, `${rows[trunkRow].lean.toFixed(0)}°`, j.sho, leanOk ? IN_BAND : OUT_OF_BAND, w, h);
-    });
+    }, 720, nearSide);
     if (shot) keyframes.push({
       ...shot, label: "Your trunk, mid-run",
       caption: shot.drawn
