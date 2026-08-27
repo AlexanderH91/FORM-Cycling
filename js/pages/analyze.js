@@ -330,6 +330,11 @@ function drawReport(view, r) {
       <p>${r.gate}</p></div>
     <a class="btn" href="#/analyze">Re-record</a>`
   : `
+    ${r.provisional ? `
+      <div class="glass card" style="border-left:3px solid #E0603A">
+        <div class="sect" style="margin:0 0 6px;color:#E0603A">Provisional read</div>
+        <p>${r.capture.reason} The numbers below are shown without verdicts.</p>
+      </div>` : ""}
     <div class="glass card" style="border-left:3px solid var(--gold)">
       <div class="sect" style="margin:0 0 6px">This ride's fix</div>
       <h2>${f.title}</h2><p>${f.line}</p>
@@ -350,5 +355,6 @@ function drawReport(view, r) {
     <a class="btn secondary coach-cta" href="#/coach?about=report">
       <span class="cmic"></span>Talk about this ride</a>
     <a class="btn" href="#/home">Done</a>`}
-  <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}</div>`;
+  <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes${
+    r.capture?.offSquareDeg != null ? ` · camera about ${r.capture.offSquareDeg}° off square` : ""} · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}</div>`;
 }

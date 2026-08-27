@@ -51,6 +51,26 @@ cadence 75–95 rpm (TrainerRoad research review) · aero trade-offs (Fintelman 
    in `js/config.js`. They only drive copy and auto-submit — any code of 6+ digits can
    still be submitted by hand, and Supabase is the one that accepts or rejects it.
 
+## Capture quality gate
+
+Every read is graded from the footage itself (`gradeCapture` in `js/analysis.js`,
+thresholds in `CAPTURE` in `js/config.js`):
+
+- **F — refused.** The model saw you in under half the frames, or never saw hip,
+  knee and ankle clearly. The gate owns the screen; no numbers travel with it.
+- **C — provisional.** The camera was more than 15° off square (rule 3's own
+  number), or you left the frame. The camera becomes the headline fix, and every
+  measurement keeps its value but loses its verdict word.
+- **A/B — trusted.** The report reads normally.
+
+Squareness is inferred, not measured: filmed truly side-on the two hips project
+onto nearly the same point, and dividing their separation by trunk length gives
+an approximate yaw. It assumes a population hip-to-trunk proportion, so it grades
+the camera rather than measuring it — which is why it only ever downgrades a
+report and never produces a coaching number. **These thresholds have not been
+calibrated against real footage yet.** Tune `CAPTURE` once there are clips to
+check them against.
+
 ## Voice coach setup (one secret, set once)
 
 The Edge Function is deployed. It needs the key, which must never be committed:

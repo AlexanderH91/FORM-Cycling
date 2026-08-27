@@ -1,4 +1,4 @@
-import { BANDS } from "./config.js";
+import { BANDS, CAPTURE } from "./config.js";
 
 /* On-device side-view analysis.
    MediaPipe Pose Landmarker (WASM) runs in the browser; the video never
@@ -114,6 +114,42 @@ async function keyframe(video, lm, t, draw, maxW = 720) {
   const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
   const drawn = p ? draw(ctx, pickSide(p), c.width, c.height) !== false : false;
   return { src: c.toDataURL("image/jpeg", 0.82), drawn };
+}
+
+/* How much the footage can be trusted, from the footage itself.
+
+   Squareness: filmed truly side-on, the two hips project onto nearly the same
+   point; as the phone rotates off-axis they separate. Dividing that separation
+   by trunk length and assuming a population hip-to-trunk proportion turns it
+   into an approximate yaw. It is an estimate of the CAMERA, not of the rider,
+   and it only ever downgrades a report — it never invents a coaching number.
+
+   Detection and visibility are the model's own account of whether it saw you,
+   so those can refuse a read outright. */
+function gradeCapture(frames) {
+  const med = (a) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : 0; };
+  const detection = frames.sampled ? frames.seen / frames.sampled : 0;
+  const visibility = med(frames.vis);
+  const clipped = frames.seen ? frames.clipped / frames.seen : 0;
+
+  const ratio = med(frames.hipSpread);
+  const offSquareDeg = +(deg(Math.asin(Math.min(1, ratio / CAPTURE.hipWidthOverTrunk)))).toFixed(0);
+
+  if (detection < CAPTURE.minDetection)
+    return { grade: "F", reason: "We could only find you in part of the clip. Get the whole bike and rider in frame, in decent light, and film again." };
+  if (visibility < CAPTURE.minVisibility)
+    return { grade: "F", reason: "Your hip, knee and ankle were never clearly visible. Move the phone to saddle height, 2–3 m away, and film again." };
+
+  const provisional = offSquareDeg > CAPTURE.offSquareMaxDeg || clipped > CAPTURE.maxClipped;
+  return {
+    grade: provisional ? "C" : offSquareDeg > CAPTURE.offSquareWarnDeg ? "B" : "A",
+    offSquareDeg, clipped: +clipped.toFixed(2),
+    detection: +detection.toFixed(2), visibility: +visibility.toFixed(2),
+    reason: !provisional ? null
+      : offSquareDeg > CAPTURE.offSquareMaxDeg
+        ? `The phone looks about ${offSquareDeg}° off square to the bike. Angles read off an angled view are stretched, so this ride's numbers are provisional.`
+        : "Part of you left the frame during the stroke, so this ride's numbers are provisional.",
+  };
 }
 
 /* Both extra views watch the frontal plane, where the honest unit is an angle
@@ -276,6 +312,9 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
 
   const rows = [];
   let missedSeeks = 0;
+  // Signals about the footage, gathered alongside the measurements.
+  const frames = { sampled: 0, seen: 0, clipped: 0, vis: [], hipSpread: [] };
+  const EDGE = 0.02;                       // a joint this close to the border is cut off
   onProgress(8, "Reading your pedal strokes…");
   for (let i = 0; i < times.length; i++) {
     if (!(await seekTo(video, times[i]))) {
@@ -285,10 +324,19 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     missedSeeks = 0;
     const res = lm.detectForVideo(video, performance.now());
     const p = res.landmarks?.[0];
+    frames.sampled++;
     if (p) {
+      frames.seen++;
       const raw = pickSide(p);
       const hip = sq(raw.hip), knee = sq(raw.knee), ankle = sq(raw.ankle);
       const sho = sq(raw.sho), heel = sq(raw.heel), toe = sq(raw.toe);
+
+      const used = [raw.hip, raw.knee, raw.ankle, raw.sho];
+      frames.vis.push(mean(used.map((j) => j.visibility ?? 1)));
+      if (used.some((j) => j.x < EDGE || j.x > 1 - EDGE || j.y < EDGE || j.y > 1 - EDGE)) frames.clipped++;
+      // Hip separation against trunk length — near zero when truly side-on.
+      const trunk = Math.hypot(sho.x - hip.x, sho.y - hip.y);
+      if (trunk > 1e-3) frames.hipSpread.push(Math.abs(sq(p[23]).x - sq(p[24]).x) / trunk);
       rows.push({
         t: times[i],                       // frames the model missed leave gaps; keep real time
         kneeBend: 180 - angleAt(hip, knee, ankle),
@@ -300,13 +348,16 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     }
     onProgress(8 + (82 * i) / times.length);
   }
-  if (rows.length < FPS * 5) { release(); return { gate: "We couldn't see you clearly for long enough. Check the framing — whole bike and rider, decent light — and film again." }; }
+  const capture = gradeCapture(frames);
+  // Rule 4: a failed read is the whole story — no numbers travel with it.
+  if (capture.grade === "F") { release(); return { gate: capture.reason, capture }; }
+  if (rows.length < FPS * 5) { release(); return { gate: "We couldn't see you clearly for long enough. Check the framing — whole bike and rider, decent light — and film again.", capture }; }
 
   onProgress(92, "Averaging across strokes…");
   const ay = rows.map((r) => r.ankleY);
   const bdc = findPeaks(ay, FPS * 0.45, 0.25);
   const tdcIdx = findPeaks(ay.map((v) => -v), FPS * 0.45, 0.25);
-  if (bdc.length < 5) { release(); return { gate: "We couldn't find steady pedaling in the part you selected. Move the trim to a section where you ride continuously." }; }
+  if (bdc.length < 5) { release(); return { gate: "We couldn't find steady pedaling in the part you selected. Move the trim to a section where you ride continuously.", capture }; }
 
   // Row indices skip any frame the model could not read, so measure the stroke
   // period from the frames' own timestamps instead of assuming none were lost.
@@ -371,18 +422,41 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
 
   onProgress(100);
   release();
+  /* Rule 3: past 15 degrees off square, degree claims stop being claims. The
+     camera becomes the fix and every verdict word comes off — the numbers stay
+     visible, but they stop pretending to be judgements. */
+  const provisional = capture.grade === "C";
+  if (provisional) {
+    fix = {
+      title: "Square the camera up first",
+      line: capture.reason,
+      cue: "Stand the phone level with the saddle, straight out to the side of the bike, and film again — then these numbers are worth acting on.",
+    };
+  }
+
   return {
+    capture,
+    provisional,
     keyframes,
     strokes: bdc.length,
     cadence,
     kneeBendBDC: { mean: +kneeBDC.mean.toFixed(1), sd: +kneeBDC.sd.toFixed(1) },
     fix,
-    cards: [
+    cards: (provisional ? stripVerdicts : (c) => c)([
       { name: "Knee at 6 o'clock", value: kneeBDC.mean.toFixed(0) + "°", verdict: kneeVerdict === "ok" ? "OK" : "Watch", note: `Band ${kLo}–${kHi}° while riding — this is the saddle-height check. ±${kneeBDC.sd.toFixed(1)}° across ${bdc.length} strokes.` },
       { name: "Foot at 6 o'clock", value: toeBDC.toFixed(0) + "° toe-down", verdict: toeBDC >= BANDS.footToeDown6[0] && toeBDC <= BANDS.footToeDown6[1] ? "OK" : "Watch", note: `Band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}° toe-down at the bottom.` },
       ...(hipTDC ? [{ name: "Hip fold at the top", value: hipTDC.toFixed(0) + "°", verdict: hipTDC >= BANDS.hipTDC[0] && hipTDC <= BANDS.hipTDC[1] ? "OK" : "Watch", note: `Fitting window ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° depending on flexibility.` }] : []),
       { name: "Cadence", value: cadence.toFixed(0) + " rpm", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Research sweet spot ${BANDS.cadence[0]}–${BANDS.cadence[1]} rpm for experienced riders.` },
       { name: "Torso angle", value: torso.toFixed(0) + "°", note: "Above horizontal. What it's worth in watts depends on speed — ride-file pairing comes next." },
-    ],
+    ]),
   };
+}
+
+// A number measured through a bad camera angle keeps its value and loses its verdict.
+function stripVerdicts(cards) {
+  return cards.map((c) => ({
+    ...c,
+    verdict: "",
+    note: c.note + " Provisional — the camera wasn't square, so treat this as indicative.",
+  }));
 }

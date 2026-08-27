@@ -11,6 +11,22 @@ export const BANDS = {
   cadence: [75, 95],
 };
 
+/* Capture quality. These are checks on the FOOTAGE, not claims about the rider,
+   so they are heuristics rather than research bands — tune them against real
+   clips. Two are reliable enough to refuse a read outright (the model either
+   saw you or it didn't); squareness and framing only downgrade the report to
+   provisional, because they are inferred rather than measured directly. */
+export const CAPTURE = {
+  minDetection: 0.5,      // share of sampled frames with a pose at all
+  minVisibility: 0.4,     // mean confidence of the joints we measure
+  offSquareWarnDeg: 8,    // below this the side view is square enough to trust
+  offSquareMaxDeg: 15,    // rule 3's own number: past this, no degree verdicts
+  maxClipped: 0.25,       // share of frames with a measured joint at the edge
+  // Trunk proportion used to turn hip separation into an angle. Population
+  // average, not this rider — which is why it grades rather than measures.
+  hipWidthOverTrunk: 0.55,
+};
+
 export const MAX_RECORD_MS = 10 * 60 * 1000; // 10 minutes
 
 // Length of the emailed sign-in code. Must match Supabase → Auth → Providers →
