@@ -1,7 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <rect width="128" height="128" rx="28" fill="#F2C230"/>
-  <g transform="translate(15.6 14.5) scale(2.2)">
+  <g id="mark" transform="translate(28.94 16.03) scale(1.5936)">
     <path d="M6 40C8 21 17 10 30 10" fill="none" stroke="#0B0B0B" stroke-width="5.5"/>
     <path d="M30.38 6.91 L30.82 5.12 L33.18 5.12 L33.62 6.91 L34.19 7.18 L35.87 6.41 L37.33 8.25 L36.21 9.72 L36.35 10.33 L38.00 11.16 L37.47 13.46 L35.63 13.49 L35.23 13.98 L35.61 15.79 L33.49 16.81 L32.32 15.39 L31.68 15.39 L30.51 16.81 L28.39 15.79 L28.77 13.98 L28.37 13.49 L26.53 13.46 L26.00 11.16 L27.65 10.33 L27.79 9.72 L26.67 8.25 L28.13 6.41 L29.81 7.18 Z M34.00 11.00 A2.0 2.0 0 1 0 30.00 11.00 A2.0 2.0 0 1 0 34.00 11.00 Z" fill="#0B0B0B" fill-rule="evenodd"/>
   </g>
+  <text id="word" x="64" y="100.8" text-anchor="middle" fill="#0B0B0B"
+        font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15.7" font-weight="600" letter-spacing="0.6">cycling</text>
 </svg>
