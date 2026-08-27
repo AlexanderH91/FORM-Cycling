@@ -126,7 +126,10 @@ function drawCapture(view, user, state) {
     cam.classList.add("hidden");
     play.src = url;
     play.load();
-    play.onloadedmetadata = () => {
+    play.onloadedmetadata = async () => {
+      // Being on screen is not enough on iOS: until the element has actually
+      // played, there is no decoded frame to show and the card stays black.
+      try { await play.play(); play.pause(); } catch { /* seek alone, then */ }
       // Seeking to a time it already sits on fires no seek, so nudge off zero.
       play.currentTime = 0.03;
       syncTrim(play, view, state, key).then(paint);
@@ -263,9 +266,20 @@ async function runAnalysis(view, user, state) {
   <div class="err" id="err"></div>`;
   const stage = view.querySelector("#stage"), bar = view.querySelector("#bar");
   try {
+    /* Your earlier rides are evidence about the same rider on the same bike.
+       The app used to tell you another ride would settle a close call and then
+       never look at the ones you had already filmed. */
+    const { data: prior } = await supa.from("cycling_sessions")
+      .select("report").order("created_at", { ascending: false }).limit(9);
+    const history = (prior ?? [])
+      .map((row) => row.report?.kneeBendBDC)
+      .filter((r) => r && Number.isFinite(r.value))
+      .map((r) => ({ value: r.value, sd: r.sd ?? 0, n: r.strokes ?? 1 }));
+
     const report = await analyzeSideClip(
       state.clips.side, state.trims.side,
-      (pct, msg) => { bar.style.width = pct + "%"; if (msg) stage.textContent = msg; });
+      (pct, msg) => { bar.style.width = pct + "%"; if (msg) stage.textContent = msg; },
+      history);
     report.viewsCaptured = Object.keys(state.clips);
 
     /* The extra views never overturn the side view — they add their own
@@ -485,7 +499,12 @@ function wirePlayer(view, r, clip) {
   let raf = null;
   const loop = () => { draw(); if (!video.paused) { seek.value = String(((video.currentTime - t0) / Math.max(0.001, t1 - t0)) * 1000); raf = requestAnimationFrame(loop); } };
 
-  video.onloadedmetadata = () => {
+  video.onloadedmetadata = async () => {
+    /* A muted inline video that has never played shows black on iOS, however
+       carefully you seek it — the decoder has produced nothing to show. Play it
+       for an instant and pause: that is what puts a real first frame under the
+       overlay instead of a skeleton floating on a black rectangle. */
+    try { await video.play(); video.pause(); } catch { /* seek alone, then */ }
     // Nudge off the exact start: seeking to a time it already sits on fires no
     // seek, so the element stays black behind a play button.
     video.currentTime = t0 + 0.03;

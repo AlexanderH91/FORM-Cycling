@@ -1,4 +1,4 @@
-import { BANDS, CAPTURE } from "./config.js";
+import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES } from "./config.js";
 
 /* On-device side-view analysis.
    MediaPipe Pose Landmarker (WASM) runs in the browser; the video never
@@ -99,6 +99,101 @@ function tag(ctx, text, at, colour, w, h) {
 
 const SEEN = (pt) => (pt?.visibility ?? 1) > 0.5;
 
+/* ---- How sure are we, really? --------------------------------------------
+
+   The spread of your individual pedal strokes says how variable YOU are. It
+   does not say how well we know your typical position — averaging sixteen
+   strokes locates that centre far better than any single stroke does. The old
+   rule compared the band edge against the raw stroke spread, which conflated
+   the two, and the cost was not theoretical: with a spread near ±4.5° it made
+   most of the 30–40° band unjudgeable by construction. Five honest rides in a
+   row came back "too close to call" while the app kept asking for a sixth.
+
+   So: the uncertainty that decides a verdict is the standard error of the
+   centre, plus a floor for the errors that averaging cannot remove. */
+export function uncertainty(m) {
+  const n = Math.max(1, m.n ?? m.strokes ?? 1);
+  return Math.sqrt((m.sd ?? 0) ** 2 / n + ANGLE_FLOOR_DEG ** 2);
+}
+
+export function verdictWith(value, u, [lo, hi]) {
+  if (!Number.isFinite(value)) return null;
+  const margin = VERDICT_SIGMAS * u;
+  if (value >= lo && value <= hi)
+    return Math.min(value - lo, hi - value) >= margin ? "ok" : "borderline";
+  const out = value < lo ? lo - value : value - hi;
+  if (out < margin) return "borderline";
+  return value < lo ? "low" : "high";
+}
+
+export const verdictFor = (m, band) => (m ? verdictWith(m.value, uncertainty(m), band) : null);
+
+/* Pools this ride with earlier ones. Each ride is an independent estimate —
+   its own camera placement, its own day — so the scatter BETWEEN rides
+   contains the setup and landmark error that a single ride can only assume a
+   value for. At three rides that scatter is measured rather than assumed,
+   which is what finally lets a close call be settled instead of deferred. */
+export function pool(reads) {
+  const clean = (reads ?? []).filter((r) => r && Number.isFinite(r.value));
+  if (!clean.length) return null;
+  const vals = clean.map((r) => r.value);
+  const centre = median(vals);
+  if (clean.length === 1)
+    return { value: centre, u: uncertainty(clean[0]), rides: 1, settled: false, lo: centre, hi: centre };
+  const between = sd(vals) / Math.sqrt(vals.length);
+  /* Never claim to be surer than one ride's own floor divided across the rides
+     — a run of rides that happen to agree closely is not proof the camera was
+     in the same place each time. */
+  const u = Math.max(between, ANGLE_FLOOR_DEG / Math.sqrt(vals.length));
+  return {
+    value: centre, u, rides: vals.length,
+    settled: vals.length >= SETTLE_RIDES,
+    lo: Math.min(...vals), hi: Math.max(...vals),
+  };
+}
+
+/* iOS will not decode a frame from a video element that has never played, and
+   a frame that was never decoded is exactly what drawImage copies: solid
+   black. Playing a muted, inline video needs no user gesture, so a play/pause
+   before we start reading is what makes the pixels exist at all. This is why
+   the report's stills came back black with the skeleton floating on nothing. */
+async function primeVideo(video) {
+  video.muted = true; video.playsInline = true;
+  try { await video.play(); } catch { return false; }
+  video.pause();
+  return true;
+}
+
+/* "seeked" fires when the seek has completed, not when the new frame has been
+   presented to the compositor. Drawing in the gap copies the previous frame,
+   or none at all. requestVideoFrameCallback is the only event that means "a
+   frame is now on screen"; where it does not exist the seek is the best signal
+   available, so this resolves either way and never blocks the report. */
+function paintedFrame(video, budgetMs = 900) {
+  if (typeof video.requestVideoFrameCallback !== "function") return Promise.resolve(false);
+  return new Promise((res) => {
+    let settled = false;
+    const done = (ok) => { if (!settled) { settled = true; res(ok); } };
+    const id = video.requestVideoFrameCallback(() => done(true));
+    setTimeout(() => { try { video.cancelVideoFrameCallback?.(id); } catch {} done(false); }, budgetMs);
+  });
+}
+
+/* A still with no variation in it is a frame that never decoded. Shipping one
+   would put a measurement overlay on a black rectangle — a drawing with
+   nothing underneath, which is worse than showing no still at all. */
+export function hasPicture(ctx, w, h) {
+  const { data } = ctx.getImageData(0, 0, w, h);
+  let lo = 255, hi = 0;
+  const step = Math.max(4, Math.floor((w * h) / 4000)) * 4;
+  for (let i = 0; i < data.length; i += step) {
+    const v = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return hi - lo > 6;
+}
+
 /* Grab the frame a number actually came from and draw that number on it.
    `draw` returns false when the joints it needs are not visible in this exact
    frame — then the still is shown with nothing drawn rather than a guess. */
@@ -116,8 +211,20 @@ async function keyframe(video, lm, t, draw, maxW = 720) {
   const scale = Math.min(1, maxW / vw);
   const c = document.createElement("canvas");
   c.width = Math.round(vw * scale); c.height = Math.round(vh * scale);
-  const ctx = c.getContext("2d");
+  const ctx = c.getContext("2d", { willReadFrequently: true });
+
+  await paintedFrame(video);
   ctx.drawImage(video, 0, 0, c.width, c.height);
+  if (!hasPicture(ctx, c.width, c.height)) {
+    // One retry: prime the decoder, land on the frame again, and look once more.
+    await primeVideo(video);
+    await seekTo(video, Math.max(0, t - 0.2), 4000);
+    await seekTo(video, t, 4000);
+    await paintedFrame(video);
+    ctx.drawImage(video, 0, 0, c.width, c.height);
+    if (!hasPicture(ctx, c.width, c.height)) return null;   // no picture, no still
+  }
+
   const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
   const drawn = p ? draw(ctx, pickSide(p), c.width, c.height) !== false : false;
   return { src: c.toDataURL("image/jpeg", 0.82), drawn };
@@ -223,6 +330,7 @@ async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read) {
       video.onloadedmetadata = res;
       video.onerror = () => rej(new Error("could not read the video"));
     });
+    await primeVideo(video);
     const sq = squareUp((video.videoWidth || 1) / (video.videoHeight || 1));
     const dur = await settleDuration(video);
     const end = Math.min(t1, dur || t1, t0 + seconds);
@@ -338,7 +446,7 @@ export async function analyzeRearClip(blob, trim, onProgress) {
   return out;
 }
 
-export async function analyzeSideClip(blob, [t0, t1], onProgress) {
+export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) {
   onProgress(3, "Loading the pose model onto your phone…");
   const lm = await getLandmarker();
 
@@ -349,6 +457,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   const release = () => { video.src = ""; URL.revokeObjectURL(srcUrl); };
   await new Promise((res, rej) => { video.onloadedmetadata = res; video.onerror = () => rej(new Error("could not read the video")); })
     .catch((e) => { release(); throw e; });
+  await primeVideo(video);
 
   const sq = squareUp((video.videoWidth || 1) / (video.videoHeight || 1));
 
@@ -432,36 +541,64 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   const torso = stat(allIdx, "torso");
   if (!kneeBDC) { release(); return { gate: "We saw you pedalling but never clearly enough at the bottom of the stroke to measure the knee. Move the phone to saddle height, 2–3 m out to the side, and film again.", capture }; }
 
-  /* A verdict needs the band edge to be further away than the rider's own
-     stroke-to-stroke variation. Inside that, the honest answer is that it is
-     too close to call — not a confident prescription built on 2 degrees. */
-  const verdictFor = (m, [lo, hi]) => {
-    if (!m) return null;
-    const edge = Math.min(Math.abs(m.value - lo), Math.abs(m.value - hi));
-    if (edge < m.sd) return "borderline";
-    return m.value < lo ? "low" : m.value > hi ? "high" : "ok";
-  };
-
   const [kLo, kHi] = BANDS.kneeBendBDC;
   const kneeVerdict = verdictFor(kneeBDC, BANDS.kneeBendBDC);
-
   const toeVerdict = verdictFor(toeBDC, BANDS.footToeDown6);
   const k = kneeBDC.value.toFixed(0), kSd = kneeBDC.sd.toFixed(1);
+  const kU = uncertainty(kneeBDC);
+
+  /* Your earlier rides are evidence about the same rider, so they are used as
+     such. `history` holds the knee read from each previous session; pooling
+     them is what turns a run of close calls into an answer. */
+  const pooled = pool([{ value: kneeBDC.value, sd: kneeBDC.sd, n: kneeBDC.n }, ...history]);
+  const pooledVerdict = verdictWith(pooled.value, pooled.u, BANDS.kneeBendBDC);
+  const pv = pooled.value.toFixed(0);
+  const edgeSide = pooled.value < kLo ? "below" : pooled.value > kHi ? "above" : null;
 
   /* One fix per report, ranked: saddle (knee out of band) → foot far out →
-     torso note. A borderline knee outranks everything, because the honest
-     next move is another read rather than a change to the bike. */
+     torso note. What outranks all of them is an honest statement of where the
+     rider actually sits, because a prescription built on a coin flip is worse
+     than no prescription. */
   let fix;
-  if (kneeVerdict === "borderline")
+  if (pooled.settled && pooledVerdict === "borderline" && edgeSide)
+    /* Settled, and settled ON the line. This is a real finding, not a failure
+       to measure: the rider is consistently at the edge of the band, and the
+       action that follows is correspondingly small. Saying "too close to call"
+       again here would be false modesty — the reads agree. */
     fix = {
-      title: "Too close to call",
-      line: `Your knee bends ${k}° at the bottom and the band runs ${kLo}–${kHi}°, but you vary ±${kSd}° from stroke to stroke — so the edge of the band is inside your own spread. Changing the saddle on that would be guesswork.`,
-      cue: "Film one more ride, same spot, same phone position. Two reads will say which side of the line you're on.",
+      title: edgeSide === "below" ? "You ride at the bottom edge" : "You ride at the top edge",
+      line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom, every one of them between ${pooled.lo.toFixed(0)}° and ${pooled.hi.toFixed(0)}°. The band runs ${kLo}–${kHi}°, so you sit just ${edgeSide} it — consistently. That agreement across separate days and separate camera setups is the evidence; no single ride could give it.`,
+      cue: edgeSide === "below"
+        ? `Raising the saddle 2–3 mm would put you inside the band. That is small enough that comfort decides: if nothing aches and the power feels good, this is a fine place to ride.`
+        : `Dropping the saddle 2–3 mm would put you inside the band. That is small enough that comfort decides: if nothing aches and the power feels good, this is a fine place to ride.`,
     };
-  else if (kneeVerdict === "low")
-    fix = { title: "Saddle looks high", line: `Your knee only bends ${k}° at the bottom (band ${kLo}–${kHi}°, ±${kSd}° across your strokes).`, cue: "Drop the saddle 5 mm, ride a minute, film again." };
-  else if (kneeVerdict === "high")
-    fix = { title: "Saddle looks low", line: `Your knee stays bent ${k}° at the bottom (band ${kLo}–${kHi}°, ±${kSd}° across your strokes).`, cue: "Raise the saddle 5 mm, ride a minute, film again." };
+  else if (pooled.settled && pooledVerdict === "ok")
+    fix = {
+      title: "Saddle height holds up",
+      line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom, inside the ${kLo}–${kHi}° band every time.`,
+      cue: "Nothing to change here. Film again after any change to the bike or the shoes.",
+    };
+  else if (pooledVerdict === "low")
+    fix = {
+      title: "Saddle looks high",
+      line: `Your knee only bends ${pv}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""} — the band runs ${kLo}–${kHi}°, and that gap is bigger than the margin of error on the read (±${pooled.u.toFixed(1)}°).`,
+      cue: "Drop the saddle 5 mm, ride a minute, film again.",
+    };
+  else if (pooledVerdict === "high")
+    fix = {
+      title: "Saddle looks low",
+      line: `Your knee stays bent ${pv}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""} — the band runs ${kLo}–${kHi}°, and that gap is bigger than the margin of error on the read (±${pooled.u.toFixed(1)}°).`,
+      cue: "Raise the saddle 5 mm, ride a minute, film again.",
+    };
+  else if (pooledVerdict === "borderline")
+    /* Not settled yet. The cue names the ride count, because the previous
+       version promised that another ride would decide it and then never
+       looked at the earlier ones. */
+    fix = {
+      title: "Too close to call — one more read",
+      line: `Your knee bends ${k}° at the bottom and the band runs ${kLo}–${kHi}°. Averaged over ${kneeBDC.n} strokes that centre is good to about ±${kU.toFixed(1)}°, which still reaches across the edge of the band.`,
+      cue: `Ride ${pooled.rides} of ${SETTLE_RIDES}. Film again in the same spot — FORM pools your rides, and how closely they agree is what settles it.`,
+    };
   else if (toeBDC && toeVerdict === "high" && toeBDC.value > BANDS.footToeDown6[1] + 3)
     fix = { title: "Very toe-down at the bottom", line: `Your foot points ${toeBDC.value.toFixed(0)}° down at the bottom of the stroke (band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}°).`, cue: "Think about dropping your heel through the bottom of the stroke — like scraping mud off the shoe." };
   else
@@ -478,8 +615,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     const bdcRow = closestTo(bdc, "kneeBend", kneeBDC.mean);
     const bdcShot = await keyframe(video, lm, rows[bdcRow].t, (ctx, j, w, h) => {
       if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
-      limb(ctx, [j.hip, j.knee, j.ankle], kneeVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
-      tag(ctx, `${rows[bdcRow].kneeBend.toFixed(0)}\u00b0`, j.knee, kneeVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
+      limb(ctx, [j.hip, j.knee, j.ankle], pooledVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
+      tag(ctx, `${rows[bdcRow].kneeBend.toFixed(0)}\u00b0`, j.knee, pooledVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
     });
     if (bdcShot) keyframes.push({
       ...bdcShot, label: "Bottom of the stroke · 6 o'clock",
@@ -535,11 +672,24 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     kneeBendBDC: { value: +kneeBDC.value.toFixed(1), sd: +kneeBDC.sd.toFixed(1),
                    strokes: kneeBDC.n, of: kneeBDC.of, centre: "median",
                    mean: +kneeBDC.value.toFixed(1) },   // .mean kept for rows written before this
-    kneeVerdict,
+    kneeVerdict: pooledVerdict,
+    kneeThisRide: kneeVerdict,
+    /* What the verdict was actually decided on, so the report can show its
+       working and Home can pick up the same story without recomputing it. */
+    pooled: { value: +pooled.value.toFixed(1), u: +pooled.u.toFixed(2), rides: pooled.rides,
+              settled: pooled.settled, lo: +pooled.lo.toFixed(1), hi: +pooled.hi.toFixed(1) },
     fix,
     cards: (provisional ? stripVerdicts : (c) => c)([
-      { name: "Knee at 6 o'clock", value: k + "°", verdict: word(kneeVerdict),
-        note: `Band ${kLo}–${kHi}° while riding — this is the saddle-height check. ±${kSd}° across ${kneeBDC.n} clearly-seen strokes${kneeBDC.n < kneeBDC.of ? ` of ${kneeBDC.of}` : ""}.` },
+      /* Two numbers, deliberately: how much the rider varies (±sd, about them)
+         and how well the centre is known (±u, about the read). Showing only the
+         first is what made every verdict look like a shrug. */
+      /* Same word as the headline: a report that says "you ride at the bottom
+         edge" up top and "Close" down here is telling two stories about one
+         joint. */
+      { name: "Knee at 6 o'clock", value: k + "°",
+        verdict: pooled.settled && pooledVerdict === "borderline" ? "At edge" : word(pooledVerdict),
+        note: `Band ${kLo}–${kHi}° while riding — this is the saddle-height check. You vary ±${kSd}° from stroke to stroke across ${kneeBDC.n} clearly-seen strokes${kneeBDC.n < kneeBDC.of ? ` of ${kneeBDC.of}` : ""}; averaged, that puts this ride's centre within ±${kU.toFixed(1)}°.${
+          pooled.rides > 1 ? ` Pooled with your previous ${pooled.rides - 1} ride${pooled.rides > 2 ? "s" : ""}: ${pv}° ±${pooled.u.toFixed(1)}°.` : ""}` },
       ...(toeBDC ? [{ name: "Foot at 6 o'clock", value: toeBDC.value.toFixed(0) + "° toe-down", verdict: word(toeVerdict),
         note: `Band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}° toe-down at the bottom. ±${toeBDC.sd.toFixed(1)}° across your strokes.` }] : []),
       ...(hipTDC ? [{ name: "Hip fold at the top", value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
@@ -550,8 +700,9 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   };
 }
 
-/* "Close" is a real answer: the number sits nearer the band edge than the
-   rider's own stroke-to-stroke spread, so neither side of the line is earned. */
+/* "Close" is a real answer: the band edge sits inside the margin of error on
+   the reading, so neither side of the line has been earned yet. It is meant to
+   be temporary — pooling rides is what retires it. */
 function word(v) {
   return v === "ok" ? "OK" : v === "borderline" ? "Close" : v ? "Watch" : "";
 }

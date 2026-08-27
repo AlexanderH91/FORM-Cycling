@@ -155,3 +155,25 @@ reloads on a URL the cache cannot answer.
 Bump both on every deploy: `BUILD` in `js/config.js` and `data-build` /
 `<meta name="form-build">` in `index.html`. `tests/version.test.mjs` fails if
 they drift apart.
+
+## Why a reading can be "too close to call"
+
+A verdict compares your reading against a band edge, and that comparison is
+only as good as the reading. Two different numbers govern it:
+
+- **±sd** — how much *you* vary from stroke to stroke. This describes the
+  rider, not the measurement, and it does not shrink with more strokes.
+- **±u** — how well the *centre* of those strokes is known. Averaging n strokes
+  gives `sd/√n`, plus `ANGLE_FLOOR_DEG` for the error that averaging cannot
+  remove: where the phone stood, lens distortion, the pose model's own bias.
+
+`ANGLE_FLOOR_DEG` (2.0°) is an **assumption, not a measurement** — it is in
+`js/config.js` so the number every verdict rests on is visible rather than
+buried. FORM stops assuming it once you have `SETTLE_RIDES` (3) rides: the
+scatter *between* separate rides measures the same error for real, because each
+ride is its own camera setup on its own day.
+
+That is why rides are pooled. A single ride that lands a degree outside the
+band is a coin flip and is reported as one; three or more that agree are a
+position, and get a verdict — including "you ride just at the edge of the
+band", which is a finding rather than a failure to measure.

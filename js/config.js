@@ -5,7 +5,7 @@
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
 export const VERSION = "v1";
-export const BUILD = "2026-08-27-g";
+export const BUILD = "2026-08-27-h";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -42,6 +42,25 @@ export const CAPTURE = {
   // average, not this rider — which is why it grades rather than measures.
   hipWidthOverTrunk: 0.55,
 };
+
+/* How far a reading can be off for reasons that averaging more pedal strokes
+   will never fix: where the phone was stood, lens distortion, and the pose
+   model's own bias on a joint. It is an ASSUMPTION, not something measured
+   from your clip — declared here so the number every verdict rests on is
+   visible instead of buried. Once you have three rides FORM stops assuming it
+   and uses the scatter between those rides instead, which measures the same
+   thing for real. */
+export const ANGLE_FLOOR_DEG = 2.0;
+
+/* How far the band edge must sit from your reading, in units of that
+   uncertainty, before FORM will call a side. 1.5 is roughly 93% confidence on
+   a one-sided call — enough to move a saddle 5 mm on, not enough to claim
+   certainty. */
+export const VERDICT_SIGMAS = 1.5;
+
+/* Rides needed before the scatter between them is worth more than the
+   assumption above. Below this, a close call stays a close call. */
+export const SETTLE_RIDES = 3;
 
 export const MAX_RECORD_MS = 10 * 60 * 1000; // 10 minutes
 
