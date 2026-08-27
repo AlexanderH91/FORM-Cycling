@@ -24,6 +24,10 @@ rules, same report shell.
   measurement — every figure it says comes from the stored report.
 - **Analysis runs on-device** — MediaPipe Pose Landmarker (WASM) in the browser
   (`js/analysis.js`). Videos never leave the phone; only measurement results are stored.
+  Both the WASM runtime **and the 5.8 MB model** are vendored in `assets/mp/`. The
+  model used to be fetched from a Google CDN at the moment you pressed Analyze,
+  which meant the app's one claim about itself — that this happens on your phone
+  — still depended on someone else's uptime, in a gym basement, on hotel wifi.
 - **Pages**: Login (+ filming intro) · Home (development over time) · Analyze
   (guided 3-view capture → trim → on-device analysis → report) · Coach · Journey
   (locked) · Profile.
@@ -89,6 +93,35 @@ can time a footfall. The *verdict* tests the band edge against the standard
 error of the mean — how firmly the average is pinned — because a verdict is a
 claim about your average, not about any one stride. Testing against the raw
 spread would mark almost every honest read "too close to call".
+
+## What has actually been verified, and what has not
+
+Worth reading before trusting a number out of this app.
+
+**Verified**, by running the shipped `analyzeSideClip()` in Chromium against a
+clip produced the same way the app produces one (canvas → MediaRecorder → webm):
+the module loads, the WASM fileset resolves, the vendored model loads, the
+`duration === Infinity` dance works, seeking works, the detection loop runs,
+grading runs, per-stride statistics run, keyframes render, and a complete report
+comes back — about 21 s for 8 s of footage. Nothing throws, nothing hangs.
+
+**Verified separately**, against synthetic stride signals: sub-frame contact
+refinement holds cadence error under 0.3 spm where naive peak-picking is out by
+up to 8.6, and the strides↔steps factor of two is right.
+
+**Not verified: accuracy on a human being.** No real footage has been through
+this build. The synthetic clip used above is a drawn figure, and the pose model
+fits a confident but incoherent skeleton to it — landmarks that wander while
+still reporting high visibility. Every measurement this app produces is
+downstream of landmark quality, so none of them can be called accurate yet.
+
+**A limitation that will not go away with tuning:** the capture gate measures
+whether the model *returned* joints, not whether they are *right*. The synthetic
+clip scored 100% detection and 0.72 visibility while producing nonsense. Timing
+regularity cannot rescue this either — `findPeaks` enforces a minimum spacing,
+so the intervals it returns look regular whatever the signal underneath was. A
+real check needs anatomical plausibility (limb lengths holding constant, joints
+not teleporting), and that is not written yet.
 
 ## Deploy (GitHub Pages)
 
@@ -159,8 +192,11 @@ preview voice, naming the reason on screen. Nothing breaks; it just isn't live.
 
 ## Roadmap
 
+- **Get real footage through it.** Everything below is secondary to this.
 - **Calibrate the capture gate** against real treadmill clips — the thresholds
   are inherited from cycling and unverified here.
+- **A landmark-plausibility check**, so "the model returned joints" stops being
+  mistaken for "the model saw a runner" (see the verification section above).
 - **Cadence relative to your own baseline.** The research is about a runner's
   own 5–10% change, so once there are two or more sessions the honest headline
   is the delta, not the population window.
