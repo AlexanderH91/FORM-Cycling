@@ -1,6 +1,6 @@
 import { supa } from "../supa.js";
 import { BANDS, SETTLE_RIDES } from "../config.js";
-import { pool, verdictWith } from "../analysis.js";
+import { pool, verdictWith, kneeReadOf } from "../analysis.js";
 import { appbar } from "../ui.js";
 
 export async function renderHome(view, user) {
@@ -17,10 +17,7 @@ export async function renderHome(view, user) {
      ride rather than repeating the newest one's headline. A single ride can sit
      a degree from the band edge and mean nothing; five rides that all sit there
      mean that is where this rider rides. */
-  const reads = (sessions ?? [])
-    .map((s) => s.report?.kneeBendBDC)
-    .filter((r) => r && Number.isFinite(r.value ?? r.mean))
-    .map((r) => ({ value: r.value ?? r.mean, sd: r.sd ?? 0, n: r.strokes ?? 1 }));
+  const reads = (sessions ?? []).map((s) => kneeReadOf(s.report)).filter(Boolean);
   const across = pool(reads);
   const [kLo, kHi] = BANDS.kneeBendBDC;
   const acrossVerdict = across ? verdictWith(across.value, across.u, BANDS.kneeBendBDC) : null;
@@ -39,7 +36,10 @@ export async function renderHome(view, user) {
     <h1>Your riding, over time</h1>
     <div class="glass card">
       <div class="row"><h3>Where you stand</h3></div>
-      <p><strong>${latest.report?.fix?.title ?? "Analysis complete"}</strong> — ${latest.report?.fix?.line ?? "open the session for details"}</p>
+      <p><strong>${standing?.word === "At edge" ? (across.value < kLo ? "You ride at the bottom edge" : "You ride at the top edge")
+        : standing?.word === "OK" ? "Saddle height holds up"
+        : standing?.word === "Not settled" ? "Not settled yet"
+        : "Worth a change"}</strong> — ${standing?.line ?? ""}</p>
     </div>
     <div class="glass card">
       <div class="row"><h3>Knee bend at the bottom</h3>

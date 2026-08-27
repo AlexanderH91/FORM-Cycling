@@ -1,6 +1,6 @@
 import { supa } from "../supa.js";
 import { MAX_RECORD_MS, BUILD } from "../config.js";
-import { analyzeSideClip, analyzeFrontClip, analyzeRearClip, overlayAt } from "../analysis.js";
+import { analyzeSideClip, analyzeFrontClip, analyzeRearClip, overlayAt, kneeReadOf } from "../analysis.js";
 import { go } from "../main.js";
 import { appbar } from "../ui.js";
 
@@ -271,10 +271,7 @@ async function runAnalysis(view, user, state) {
        never look at the ones you had already filmed. */
     const { data: prior } = await supa.from("cycling_sessions")
       .select("report").order("created_at", { ascending: false }).limit(9);
-    const history = (prior ?? [])
-      .map((row) => row.report?.kneeBendBDC)
-      .filter((r) => r && Number.isFinite(r.value))
-      .map((r) => ({ value: r.value, sd: r.sd ?? 0, n: r.strokes ?? 1 }));
+    const history = (prior ?? []).map((row) => kneeReadOf(row.report)).filter(Boolean);
 
     const report = await analyzeSideClip(
       state.clips.side, state.trims.side,
@@ -407,13 +404,15 @@ function drawReport(view, r, sideClip) {
         </div>
         <figcaption>Knee angle, drawn on the joints the model found in each frame. Green in band, gold out.</figcaption>
       </div>` : ""}
-    ${r.keyframes?.length ? `
-      <div class="sect">What we measured on</div>
-      ${r.keyframes.map((k) => `
+    <div class="sect">What we measured on</div>
+    ${r.keyframes?.length ? r.keyframes.map((k) => `
         <figure class="keyframe glass">
           <img src="${k.src}" alt="${k.label}">
           <figcaption><span class="kf-label">${k.label}</span>${k.caption}</figcaption>
-        </figure>`).join("")}` : ""}
+        </figure>`).join("")
+      /* An empty section used to just vanish, which read as "the feature isn't
+         there" rather than "the grab failed". Name the reason. */
+      : `<div class="glass card"><p>No stills this time — ${r.stillsFail ?? "the frames could not be pulled back out of the clip"}. The measurements above are unaffected; they were read from the clip as it was sampled.</p></div>`}
     <div class="sect">Measured</div>
     ${r.cards.map((c) => `
       <div class="glass card"><div class="row"><h3>${c.name}</h3>

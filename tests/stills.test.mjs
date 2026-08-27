@@ -46,7 +46,8 @@ const r = await page.evaluate(async () => {
     primesReaders: (src.match(/await primeVideo\(video\)/g) || []).length,
     waitsForPaint: /await paintedFrame\(video\)/.test(src),
     usesRVFC: /requestVideoFrameCallback/.test(src),
-    retriesOnce: /if \(!hasPicture\([\s\S]{0,400}?return null;\s+\/\/ no picture, no still/.test(src),
+    retriesOnce: /if \(!hasPicture\([\s\S]{0,400}?return \{ fail: "the frame decoded blank/.test(src),
+    namesTheReason: /stillsFail/.test(src),
     playerPrimes: /await video\.play\(\); video\.pause\(\)/.test(pageSrc),
     previewPrimes: /await play\.play\(\); play\.pause\(\)/.test(pageSrc),
   };
@@ -60,7 +61,8 @@ T('a genuinely dark frame with a rider in it is not thrown away', r.dim === true
 T('every video reader is primed before it is read', r.primesReaders === 3, `primeVideo calls=${r.primesReaders}`);
 T('the still waits for a frame to be presented, not just for the seek',
   r.waitsForPaint && r.usesRVFC, 'paintedFrame via requestVideoFrameCallback');
-T('a blank grab yields no still rather than an overlay on black', r.retriesOnce, 'retry once, then return null');
+T('a blank grab yields no still rather than an overlay on black', r.retriesOnce, 'retry once, then report the failure');
+T('and the report is told why, instead of the section vanishing', r.namesTheReason, 'stillsFail travels with the report');
 T('the report player plays a frame before it paints the overlay', r.playerPrimes);
 T('the capture preview does the same', r.previewPrimes);
 await b.close();

@@ -60,12 +60,31 @@ function findPeaks(sig, minDist, prominence) {
 const IN_BAND = "#34D27B", OUT_OF_BAND = "#F2C230";
 
 // The camera sees one side of the rider; take whichever is more visible.
-function pickSide(p) {
-  const L = (p[23].visibility ?? 1) + (p[25].visibility ?? 1) + (p[27].visibility ?? 1);
-  const R = (p[24].visibility ?? 1) + (p[26].visibility ?? 1) + (p[28].visibility ?? 1);
-  const [hip, knee, ankle, sho, heel, toe] =
-    L >= R ? [p[23], p[25], p[27], p[11], p[29], p[31]] : [p[24], p[26], p[28], p[12], p[30], p[32]];
-  return { hip, knee, ankle, sho, heel, toe };
+const SIDES = {
+  L: (p) => ({ hip: p[23], knee: p[25], ankle: p[27], sho: p[11], heel: p[29], toe: p[31] }),
+  R: (p) => ({ hip: p[24], knee: p[26], ankle: p[28], sho: p[12], heel: p[30], toe: p[32] }),
+};
+const sideVis = (j) => mean([j.hip, j.knee, j.ankle].map((q) => q.visibility ?? 1));
+
+/* One leg, chosen by which one this camera saw better across the WHOLE clip.
+   `flipped` is how many frames would have gone the other way — a high count
+   means the phone was not truly side-on and the two legs look alike. */
+export function dominantSide(frames) {
+  const lWins = frames.filter((f) => sideVis(f.L) >= sideVis(f.R)).length;
+  const side = lWins * 2 >= frames.length ? "L" : "R";
+  return { side, flipped: side === "L" ? frames.length - lWins : lWins };
+}
+
+/* Which leg to measure. THIS MUST BE DECIDED ONCE FOR THE WHOLE CLIP, not per
+   frame. A rider's legs are 180 degrees out of phase, so a per-frame choice —
+   which is what shipped — swaps to the far leg the moment it is momentarily
+   the better-seen one, and then the "knee angle at the bottom of the stroke"
+   is being read off a leg that is at the top of it. That is visible as the
+   overlay snapping between legs, and invisible as inflated spread and a
+   centre pulled towards the middle of the two. */
+export function pickSide(p, side) {
+  const at = side ?? (sideVis(SIDES.L(p)) >= sideVis(SIDES.R(p)) ? "L" : "R");
+  return SIDES[at](p);
 }
 
 // Every joint in `pts` must be visible in THIS frame — the caller checks that
@@ -133,6 +152,17 @@ export const verdictFor = (m, band) => (m ? verdictWith(m.value, uncertainty(m),
    contains the setup and landmark error that a single ride can only assume a
    value for. At three rides that scatter is measured rather than assumed,
    which is what finally lets a close call be settled instead of deferred. */
+/* One reader for a stored knee measurement, used everywhere. Home accepted
+   `.mean` (written by older rows) while the analysis only accepted `.value`,
+   so the two screens pooled different numbers of rides and printed different
+   ride counts for the same rider on the same evening. */
+export function kneeReadOf(report) {
+  const k = report?.kneeBendBDC;
+  const value = k?.value ?? k?.mean;
+  if (!Number.isFinite(value)) return null;
+  return { value, sd: k.sd ?? 0, n: k.strokes ?? 1 };
+}
+
 export function pool(reads) {
   const clean = (reads ?? []).filter((r) => r && Number.isFinite(r.value));
   if (!clean.length) return null;
@@ -157,6 +187,21 @@ export function pool(reads) {
    black. Playing a muted, inline video needs no user gesture, so a play/pause
    before we start reading is what makes the pixels exist at all. This is why
    the report's stills came back black with the skeleton floating on nothing. */
+/* A <video> that is not in the document has no painted frame for a 2D canvas
+   to copy, and display:none is just as dead — both give drawImage a black
+   rectangle. The pose model reads the element through a different path and
+   sees frames either way, which is why the numbers looked fine while the
+   stills came back empty. So: really in the page, really laid out, one pixel,
+   and invisible. */
+function offscreenVideo() {
+  const v = document.createElement("video");
+  v.muted = true; v.playsInline = true; v.preload = "auto";
+  v.setAttribute("aria-hidden", "true");
+  v.style.cssText = "position:fixed;left:0;bottom:0;width:1px;height:1px;opacity:0.01;pointer-events:none;z-index:-1";
+  document.body.appendChild(v);
+  return v;
+}
+
 async function primeVideo(video) {
   video.muted = true; video.playsInline = true;
   try { await video.play(); } catch { return false; }
@@ -197,17 +242,17 @@ export function hasPicture(ctx, w, h) {
 /* Grab the frame a number actually came from and draw that number on it.
    `draw` returns false when the joints it needs are not visible in this exact
    frame — then the still is shown with nothing drawn rather than a guess. */
-async function keyframe(video, lm, t, draw, maxW = 720) {
+async function keyframe(video, lm, t, draw, side, maxW = 720) {
   /* The sampling pass leaves the video at the end of the clip, so grabbing a
      keyframe means a long seek backwards — and in a MediaRecorder file, which
      carries no seek index, that is far slower than the forward steps the loop
      makes. The loop's 2.5s budget silently turned every keyframe into null and
      the report lost its stills. Rewind first, then go forward to the frame,
      with a budget that suits a one-off. */
-  if (!(await seekTo(video, 0, 6000))) return null;
-  if (!(await seekTo(video, t, 8000))) return null;   // no frame, no drawing
+  if (!(await seekTo(video, 0, 6000))) return { fail: "the clip would not rewind" };
+  if (!(await seekTo(video, t, 8000))) return { fail: "the clip would not seek to that moment" };
   const vw = video.videoWidth, vh = video.videoHeight;
-  if (!vw || !vh) return null;
+  if (!vw || !vh) return { fail: "the video reported no size" };
   const scale = Math.min(1, maxW / vw);
   const c = document.createElement("canvas");
   c.width = Math.round(vw * scale); c.height = Math.round(vh * scale);
@@ -222,11 +267,11 @@ async function keyframe(video, lm, t, draw, maxW = 720) {
     await seekTo(video, t, 4000);
     await paintedFrame(video);
     ctx.drawImage(video, 0, 0, c.width, c.height);
-    if (!hasPicture(ctx, c.width, c.height)) return null;   // no picture, no still
+    if (!hasPicture(ctx, c.width, c.height)) return { fail: "the frame decoded blank on this device" };
   }
 
   const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
-  const drawn = p ? draw(ctx, pickSide(p), c.width, c.height) !== false : false;
+  const drawn = p ? draw(ctx, pickSide(p, side), c.width, c.height) !== false : false;
   return { src: c.toDataURL("image/jpeg", 0.82), drawn };
 }
 
@@ -320,11 +365,10 @@ function seekTo(video, t, budgetMs = 2500) {
 
 async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read) {
   const lm = await getLandmarker();
-  const video = document.createElement("video");
-  video.muted = true; video.playsInline = true;
+  const video = offscreenVideo();
   const srcUrl = URL.createObjectURL(blob);
   video.src = srcUrl;
-  const release = () => { video.src = ""; URL.revokeObjectURL(srcUrl); };
+  const release = () => { video.src = ""; URL.revokeObjectURL(srcUrl); video.remove(); };
   try {
     await new Promise((res, rej) => {
       video.onloadedmetadata = res;
@@ -450,11 +494,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
   onProgress(3, "Loading the pose model onto your phone…");
   const lm = await getLandmarker();
 
-  const video = document.createElement("video");
-  video.muted = true; video.playsInline = true;
+  const video = offscreenVideo();
   const srcUrl = URL.createObjectURL(blob);
   video.src = srcUrl;
-  const release = () => { video.src = ""; URL.revokeObjectURL(srcUrl); };
+  const release = () => { video.src = ""; URL.revokeObjectURL(srcUrl); video.remove(); };
   await new Promise((res, rej) => { video.onloadedmetadata = res; video.onerror = () => rej(new Error("could not read the video")); })
     .catch((e) => { release(); throw e; });
   await primeVideo(video);
@@ -468,6 +511,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
   for (let t = t0; t < end; t += 1 / FPS) times.push(t);
 
   const rows = [];
+  const seenFrames = [];
   let missedSeeks = 0;
   // Signals about the footage, gathered alongside the measurements.
   const frames = { sampled: 0, seen: 0, clipped: 0, vis: [], hipSpread: [] };
@@ -482,9 +526,17 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
     const res = lm.detectForVideo(video, performance.now());
     const p = res.landmarks?.[0];
     frames.sampled++;
-    if (p) {
+    /* Collect both legs and decide later. Nothing here may depend on which leg
+       we end up measuring, because that answer needs the whole clip. */
+    if (p) seenFrames.push({ t: times[i], L: SIDES.L(p), R: SIDES.R(p), hipL: p[23], hipR: p[24] });
+    onProgress(8 + (82 * i) / times.length);
+  }
+
+  const { side, flipped } = dominantSide(seenFrames);
+
+  for (const f of seenFrames) {
       frames.seen++;
-      const raw = pickSide(p);
+      const raw = f[side];
       const hip = sq(raw.hip), knee = sq(raw.knee), ankle = sq(raw.ankle);
       const sho = sq(raw.sho), heel = sq(raw.heel), toe = sq(raw.toe);
 
@@ -493,12 +545,12 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
       if (used.some((j) => j.x < EDGE || j.x > 1 - EDGE || j.y < EDGE || j.y > 1 - EDGE)) frames.clipped++;
       // Hip separation against trunk length — near zero when truly side-on.
       const trunk = Math.hypot(sho.x - hip.x, sho.y - hip.y);
-      if (trunk > 1e-3) frames.hipSpread.push(Math.abs(sq(p[23]).x - sq(p[24]).x) / trunk);
+      if (trunk > 1e-3) frames.hipSpread.push(Math.abs(sq(f.hipL).x - sq(f.hipR).x) / trunk);
       // Raw (un-squared) coordinates travel with the row: drawing happens in
       // image space, so the overlay can ride the clip frame by frame.
       const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
       rows.push({
-        t: times[i],                       // frames the model missed leave gaps; keep real time
+        t: f.t,                            // frames the model missed leave gaps; keep real time
         j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
         // How well the model saw the joints this frame's angles are built from.
         conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
@@ -508,9 +560,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
         toeDown: -deg(Math.atan2(heel.y - toe.y, Math.abs(toe.x - heel.x) + 1e-9)),
         ankleY: ankle.y,                   // y only — unaffected by the x correction
       });
-    }
-    onProgress(8 + (82 * i) / times.length);
   }
+
   const capture = gradeCapture(frames);
   // Rule 4: a failed read is the whole story — no numbers travel with it.
   if (capture.grade === "F") { release(); return { gate: capture.reason, capture }; }
@@ -611,14 +662,19 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
     idxs.reduce((best, i) => (Math.abs(rows[i][key] - target) < Math.abs(rows[best][key] - target) ? i : best), idxs[0]);
 
   const keyframes = [];
+  /* When a still cannot be made, SAY so. Silently dropping the section is how
+     three rounds went by with "no picture references" and no way to tell
+     whether the grab failed, the frame was blank, or the code never ran. */
+  let stillsFail = null;
   try {
     const bdcRow = closestTo(bdc, "kneeBend", kneeBDC.mean);
     const bdcShot = await keyframe(video, lm, rows[bdcRow].t, (ctx, j, w, h) => {
       if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
       limb(ctx, [j.hip, j.knee, j.ankle], pooledVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
       tag(ctx, `${rows[bdcRow].kneeBend.toFixed(0)}\u00b0`, j.knee, pooledVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
-    });
-    if (bdcShot) keyframes.push({
+    }, side);
+    if (bdcShot.fail) stillsFail = bdcShot.fail;
+    else keyframes.push({
       ...bdcShot, label: "Bottom of the stroke · 6 o'clock",
       caption: bdcShot.drawn
         ? `Knee ${rows[bdcRow].kneeBend.toFixed(0)}\u00b0 on this stroke — the average across all ${bdc.length} is ${kneeBDC.mean.toFixed(0)}\u00b0.`
@@ -632,15 +688,16 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
         if (!SEEN(j.sho) || !SEEN(j.hip) || !SEEN(j.knee)) return false;
         limb(ctx, [j.sho, j.hip, j.knee], hipOk ? IN_BAND : OUT_OF_BAND, w, h);
         tag(ctx, `${rows[tdcRow].hip.toFixed(0)}\u00b0`, j.hip, hipOk ? IN_BAND : OUT_OF_BAND, w, h);
-      });
-      if (tdcShot) keyframes.push({
+      }, side);
+      if (tdcShot.fail) stillsFail ??= tdcShot.fail;
+      else keyframes.push({
         ...tdcShot, label: "Top of the stroke",
         caption: tdcShot.drawn
           ? `Hip fold ${rows[tdcRow].hip.toFixed(0)}\u00b0 on this stroke — the average is ${hipTDC.toFixed(0)}\u00b0.`
           : "We couldn't see shoulder, hip and knee clearly enough in this frame to draw on it.",
       });
     }
-  } catch { /* a report without stills still stands; the numbers are unaffected */ }
+  } catch (e) { stillsFail ??= e?.message || "the frame grab threw"; }
 
   onProgress(100);
   release();
@@ -669,6 +726,12 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
     keyframes,
     strokes: bdc.length,
     cadence,
+    /* Which leg every number here came from, and how many frames the model
+       would have put on the other one. A high flip count on a side-on clip
+       means the camera was not square. */
+    leg: side === "L" ? "left" : "right",
+    legFlips: flipped,
+    stillsFail,
     kneeBendBDC: { value: +kneeBDC.value.toFixed(1), sd: +kneeBDC.sd.toFixed(1),
                    strokes: kneeBDC.n, of: kneeBDC.of, centre: "median",
                    mean: +kneeBDC.value.toFixed(1) },   // .mean kept for rows written before this
