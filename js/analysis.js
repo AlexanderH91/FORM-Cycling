@@ -140,13 +140,23 @@ function gradeCapture(frames) {
   if (visibility < CAPTURE.minVisibility)
     return { grade: "F", reason: "Your hip, knee and ankle were never clearly visible. Move the phone to saddle height, 2–3 m away, and film again." };
 
-  const provisional = offSquareDeg > CAPTURE.offSquareMaxDeg || clipped > CAPTURE.maxClipped;
+  /* The squareness estimate is not trusted enough to suppress a measurement
+     yet: it read 21° on footage with 99% detection and 92% visibility, which
+     is a well-shot clip. The far hip is a low-confidence guess in a true side
+     view, so the separation it implies is probably the estimator's floor
+     rather than the camera's angle. It still reports, so it can be checked
+     against real clips — it just no longer overrides a good read. Flip
+     squarenessGates once the number has been shown to track reality. */
+  const offSquare = CAPTURE.squarenessGates && offSquareDeg > CAPTURE.offSquareMaxDeg;
+  const provisional = offSquare || clipped > CAPTURE.maxClipped;
   return {
     grade: provisional ? "C" : offSquareDeg > CAPTURE.offSquareWarnDeg ? "B" : "A",
     offSquareDeg, clipped: +clipped.toFixed(2),
+    hipSpread: +ratio.toFixed(3),          // raw signal, kept for calibration
+    squarenessGates: CAPTURE.squarenessGates,
     detection: +detection.toFixed(2), visibility: +visibility.toFixed(2),
     reason: !provisional ? null
-      : offSquareDeg > CAPTURE.offSquareMaxDeg
+      : offSquare
         ? `The phone looks about ${offSquareDeg}° off square to the bike. Angles read off an angled view are stretched, so this ride's numbers are provisional.`
         : "Part of you left the frame during the stroke, so this ride's numbers are provisional.",
   };
@@ -240,19 +250,17 @@ const amplitude = (a) => Math.max(...a) - Math.min(...a);
    independent of how far away the phone was. */
 export async function analyzeFrontClip(blob, trim, onProgress) {
   const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq) => {
-    const need = [23, 24, 25, 26, 27, 28];
-    if (need.some((i) => (p[i].visibility ?? 1) < 0.5)) return null;
-    const L = { hip: sq(p[23]), knee: sq(p[25]), ankle: sq(p[27]) };
-    const R = { hip: sq(p[24]), knee: sq(p[26]), ankle: sq(p[28]) };
+    // Only the joints this actually measures — knees and ankles. It used to
+    // demand the hips too and then never use them, which threw away frames.
+    const need = [25, 26, 27, 28];
+    if (need.some((i) => (p[i].visibility ?? 1) < CAPTURE.minJointVisibility)) return null;
     // Rider faces the camera: their left is on our right, so inward flips.
     return {
-      left:  fromVertical(L.knee, L.ankle, true),
-      right: fromVertical(R.knee, R.ankle, false),
-      ankleY: (L.ankle.y + R.ankle.y) / 2,
-      hipSpan: Math.abs(L.hip.x - R.hip.x),
+      left:  fromVertical(sq(p[25]), sq(p[27]), true),
+      right: fromVertical(sq(p[26]), sq(p[28]), false),
     };
   });
-  if (rows.length < 12 * 4) return { gate: "We couldn't see both legs clearly for long enough from the front. Check the framing and the light, then film again." };
+  if (rows.length < 12 * 3) return { gate: "We couldn't see both legs clearly for long enough from the front. Check the framing and the light, then film again." };
 
   const left = amplitude(rows.map((r) => r.left));
   const right = amplitude(rows.map((r) => r.right));
@@ -272,16 +280,14 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
    the side view, which is the view that measures saddle height. */
 export async function analyzeRearClip(blob, trim, onProgress) {
   const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq) => {
-    const need = [11, 12, 23, 24, 27, 28];
-    if (need.some((i) => (p[i].visibility ?? 1) < 0.5)) return null;
+    // Shoulders and hips only. Filmed from behind the wheel the ankles are
+    // hidden by the bike, and requiring them gated out every usable frame.
+    const need = [11, 12, 23, 24];
+    if (need.some((i) => (p[i].visibility ?? 1) < CAPTURE.minJointVisibility)) return null;
     const tilt = (a, b) => deg(Math.atan2(sq(b).y - sq(a).y, Math.abs(sq(b).x - sq(a).x) + 1e-9));
-    return {
-      shoulder: tilt(p[11], p[12]),
-      pelvis: tilt(p[23], p[24]),
-      ankleY: (sq(p[27]).y + sq(p[28]).y) / 2,
-    };
+    return { shoulder: tilt(p[11], p[12]), pelvis: tilt(p[23], p[24]) };
   });
-  if (rows.length < 12 * 4) return { gate: "We couldn't see your shoulders and hips clearly for long enough from behind. Light from the side — never a window straight behind you — then film again." };
+  if (rows.length < 12 * 3) return { gate: "We couldn't see your shoulders and hips clearly for long enough from behind. Light from the side — never a window straight behind you — then film again." };
 
   return {
     shoulderRock: +amplitude(rows.map((r) => r.shoulder)).toFixed(1),

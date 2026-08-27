@@ -330,15 +330,12 @@ function drawReport(view, r) {
       <p>${r.gate}</p></div>
     <a class="btn" href="#/analyze">Re-record</a>`
   : `
-    ${r.provisional ? `
-      <div class="glass card" style="border-left:3px solid #E0603A">
-        <div class="sect" style="margin:0 0 6px;color:#E0603A">Provisional read</div>
-        <p>${r.capture.reason} The numbers below are shown without verdicts.</p>
-      </div>` : ""}
-    <div class="glass card" style="border-left:3px solid var(--gold)">
-      <div class="sect" style="margin:0 0 6px">This ride's fix</div>
+    <div class="glass card" style="border-left:3px solid ${r.provisional ? "#E0603A" : "var(--gold)"}">
+      <div class="sect" style="margin:0 0 6px${r.provisional ? ";color:#E0603A" : ""}">${
+        r.provisional ? "Provisional read" : "This ride's fix"}</div>
       <h2>${f.title}</h2><p>${f.line}</p>
       <p><strong>Try:</strong> ${f.cue}</p>
+      ${r.provisional ? `<p>The numbers below are shown without verdicts.</p>` : ""}
     </div>
     ${r.keyframes?.length ? `
       <div class="sect">What we measured on</div>

@@ -22,6 +22,13 @@ export const CAPTURE = {
   offSquareWarnDeg: 8,    // below this the side view is square enough to trust
   offSquareMaxDeg: 15,    // rule 3's own number: past this, no degree verdicts
   maxClipped: 0.25,       // share of frames with a measured joint at the edge
+  minJointVisibility: 0.4,// per-frame confidence floor for a joint we measure
+  /* The off-square estimate reports but does not yet suppress a read. It
+     called a clip with 99% detection and 92% visibility 21° off square, which
+     is almost certainly the estimator's floor rather than the camera. Turn
+     this on once the figure has been checked against clips known to be square
+     and known to be angled. */
+  squarenessGates: false,
   // Trunk proportion used to turn hip separation into an angle. Population
   // average, not this rider — which is why it grades rather than measures.
   hipWidthOverTrunk: 0.55,
