@@ -1,14 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <rect width="128" height="128" rx="28" fill="#CDEB5A"/>
   <g id="mark" transform="translate(28.94 16.03) scale(1.5936)">
-    <path d="M6 40C8 21 17 10 30 10" fill="none" stroke="#0C0E11" stroke-width="5.5"/>
-    <!-- On a volt ground the burst goes dark and the runner is punched out of
-         it, the same inversion FORM Cycling uses for its chainring hub. A solid
-         figure on the arc's tip would merge into an unreadable blob. -->
-    <path d="M32.00 1.50 L33.86 4.05 L36.75 2.77 L37.09 5.91 L40.23 6.25 L38.95 9.14 L41.50 11.00 L38.95 12.86 L40.23 15.75 L37.09 16.09 L36.75 19.23 L33.86 17.95 L32.00 20.50 L30.14 17.95 L27.25 19.23 L26.91 16.09 L23.77 15.75 L25.05 12.86 L22.50 11.00 L25.05 9.14 L23.77 6.25 L26.91 5.91 L27.25 2.77 L30.14 4.05 Z" fill="#0C0E11"/>
-    <g fill="#CDEB5A" stroke="#CDEB5A" stroke-width="1.85" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="34.4" cy="7.1" r="1.55" stroke="none"/><path fill="none" d="M33.3 8.8 L30.8 12.4"/><path fill="none" d="M30.8 12.4 L34 12.5 L34.7 15.4"/><path fill="none" d="M30.8 12.4 L28.9 13.6 L28.1 11.7"/><path fill="none" d="M33.3 8.8 L35.2 10.6 L33.9 9"/>
-    </g>
+    <!-- The arc stops where the track begins. The infield is left open, so the
+         volt tile reads straight through it — a solid badge would need punching
+         out, a ring does not. -->
+    <path d="M6 40 C7.56 25.18 13.38 15.23 22.03 11.57" fill="none" stroke="#0C0E11" stroke-width="5.5" stroke-linecap="round"/>
+    <rect x="26.4" y="4.3" width="17.2" height="12.6" rx="6.3" fill="none" stroke="#0C0E11" stroke-width="2.4"/>
+    <rect x="29.1" y="7" width="11.8" height="7.2" rx="3.6" fill="none" stroke="#0C0E11" stroke-width="1.2"/>
+    <path d="M35 14.2 L35 15.75" stroke="#0C0E11" stroke-width="1.2" stroke-linecap="round"/>
   </g>
   <text id="word" x="64" y="100.8" text-anchor="middle" fill="#0C0E11"
         font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15.7" font-weight="600" letter-spacing="0.6">running</text>
