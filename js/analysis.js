@@ -384,6 +384,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
       rows.push({
         t: times[i],                       // frames the model missed leave gaps; keep real time
         j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
+        // How well the model saw the joints this frame's angles are built from.
+        conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
         kneeBend: 180 - angleAt(hip, knee, ankle),
         hip: angleAt(sho, hip, knee),
         torso: deg(Math.atan2(Math.abs(sho.y - hip.y), Math.abs(sho.x - hip.x) + 1e-9)),
@@ -407,25 +409,56 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
   // Row indices skip any frame the model could not read, so measure the stroke
   // period from the frames' own timestamps instead of assuming none were lost.
   const cadence = 60 / mean(bdc.slice(1).map((v, i) => rows[v].t - rows[bdc[i]].t));
-  const at = (idxs, key) => idxs.map((i) => rows[i][key]);
-  const kneeBDC = { mean: mean(at(bdc, "kneeBend")), sd: sd(at(bdc, "kneeBend")) };
-  const toeBDC = mean(at(bdc, "toeDown"));
-  const hipTDC = tdcIdx.length ? mean(at(tdcIdx, "hip")) : null;
-  const torso = mean(rows.map((r) => r.torso));
+
+  /* A reported angle is the MEDIAN of the strokes that were clearly seen, not
+     the mean of every frame. One frame of bad landmarks used to drag the
+     average, and the average is what the fix is prescribed from. */
+  const stat = (idxs, key) => {
+    const vals = idxs.filter((i) => rows[i].conf >= CAPTURE.minJointVisibility).map((i) => rows[i][key]);
+    if (!vals.length) return null;
+    return { value: median(vals), sd: sd(vals), n: vals.length, of: idxs.length };
+  };
+  const allIdx = rows.map((_, i) => i);
+  const kneeBDC = stat(bdc, "kneeBend");
+  const toeBDC = stat(bdc, "toeDown");
+  const hipTDC = tdcIdx.length ? stat(tdcIdx, "hip") : null;
+  const torso = stat(allIdx, "torso");
+  if (!kneeBDC) { release(); return { gate: "We saw you pedalling but never clearly enough at the bottom of the stroke to measure the knee. Move the phone to saddle height, 2–3 m out to the side, and film again.", capture }; }
+
+  /* A verdict needs the band edge to be further away than the rider's own
+     stroke-to-stroke variation. Inside that, the honest answer is that it is
+     too close to call — not a confident prescription built on 2 degrees. */
+  const verdictFor = (m, [lo, hi]) => {
+    if (!m) return null;
+    const edge = Math.min(Math.abs(m.value - lo), Math.abs(m.value - hi));
+    if (edge < m.sd) return "borderline";
+    return m.value < lo ? "low" : m.value > hi ? "high" : "ok";
+  };
 
   const [kLo, kHi] = BANDS.kneeBendBDC;
-  const kneeVerdict = kneeBDC.mean < kLo ? "low" : kneeBDC.mean > kHi ? "high" : "ok";
+  const kneeVerdict = verdictFor(kneeBDC, BANDS.kneeBendBDC);
 
-  // One fix per report, ranked: saddle (knee out of band) → foot far out → torso note.
+  const toeVerdict = verdictFor(toeBDC, BANDS.footToeDown6);
+  const k = kneeBDC.value.toFixed(0), kSd = kneeBDC.sd.toFixed(1);
+
+  /* One fix per report, ranked: saddle (knee out of band) → foot far out →
+     torso note. A borderline knee outranks everything, because the honest
+     next move is another read rather than a change to the bike. */
   let fix;
-  if (kneeVerdict === "low")
-    fix = { title: "Saddle looks high", line: `Your knee only bends ${kneeBDC.mean.toFixed(0)}° at the bottom (band ${kLo}–${kHi}°).`, cue: "Drop the saddle 5 mm, ride a minute, film again." };
+  if (kneeVerdict === "borderline")
+    fix = {
+      title: "Too close to call",
+      line: `Your knee bends ${k}° at the bottom and the band runs ${kLo}–${kHi}°, but you vary ±${kSd}° from stroke to stroke — so the edge of the band is inside your own spread. Changing the saddle on that would be guesswork.`,
+      cue: "Film one more ride, same spot, same phone position. Two reads will say which side of the line you're on.",
+    };
+  else if (kneeVerdict === "low")
+    fix = { title: "Saddle looks high", line: `Your knee only bends ${k}° at the bottom (band ${kLo}–${kHi}°, ±${kSd}° across your strokes).`, cue: "Drop the saddle 5 mm, ride a minute, film again." };
   else if (kneeVerdict === "high")
-    fix = { title: "Saddle looks low", line: `Your knee stays bent ${kneeBDC.mean.toFixed(0)}° at the bottom (band ${kLo}–${kHi}°).`, cue: "Raise the saddle 5 mm, ride a minute, film again." };
-  else if (toeBDC > BANDS.footToeDown6[1] + 3)
-    fix = { title: "Very toe-down at the bottom", line: `Your foot points ${toeBDC.toFixed(0)}° down at the bottom of the stroke (band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}°).`, cue: "Think about dropping your heel through the bottom of the stroke — like scraping mud off the shoe." };
+    fix = { title: "Saddle looks low", line: `Your knee stays bent ${k}° at the bottom (band ${kLo}–${kHi}°, ±${kSd}° across your strokes).`, cue: "Raise the saddle 5 mm, ride a minute, film again." };
+  else if (toeBDC && toeVerdict === "high" && toeBDC.value > BANDS.footToeDown6[1] + 3)
+    fix = { title: "Very toe-down at the bottom", line: `Your foot points ${toeBDC.value.toFixed(0)}° down at the bottom of the stroke (band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}°).`, cue: "Think about dropping your heel through the bottom of the stroke — like scraping mud off the shoe." };
   else
-    fix = { title: "Position holds up — keep riding", line: `Knee ${kneeBDC.mean.toFixed(0)}° at the bottom, cadence ${cadence.toFixed(0)} rpm — the basics are in their bands.`, cue: "Film again in a month, or after any change to the bike." };
+    fix = { title: "Position holds up — keep riding", line: `Knee ${k}° at the bottom, cadence ${cadence.toFixed(0)} rpm — the basics are in their bands.`, cue: "Film again in a month, or after any change to the bike." };
 
   /* The picture has to be of the stroke the number describes, so show the one
      closest to the average rather than an arbitrary or best-looking frame. */
@@ -492,16 +525,28 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress) {
     keyframes,
     strokes: bdc.length,
     cadence,
-    kneeBendBDC: { mean: +kneeBDC.mean.toFixed(1), sd: +kneeBDC.sd.toFixed(1) },
+    kneeBendBDC: { value: +kneeBDC.value.toFixed(1), sd: +kneeBDC.sd.toFixed(1),
+                   strokes: kneeBDC.n, of: kneeBDC.of, centre: "median",
+                   mean: +kneeBDC.value.toFixed(1) },   // .mean kept for rows written before this
+    kneeVerdict,
     fix,
     cards: (provisional ? stripVerdicts : (c) => c)([
-      { name: "Knee at 6 o'clock", value: kneeBDC.mean.toFixed(0) + "°", verdict: kneeVerdict === "ok" ? "OK" : "Watch", note: `Band ${kLo}–${kHi}° while riding — this is the saddle-height check. ±${kneeBDC.sd.toFixed(1)}° across ${bdc.length} strokes.` },
-      { name: "Foot at 6 o'clock", value: toeBDC.toFixed(0) + "° toe-down", verdict: toeBDC >= BANDS.footToeDown6[0] && toeBDC <= BANDS.footToeDown6[1] ? "OK" : "Watch", note: `Band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}° toe-down at the bottom.` },
-      ...(hipTDC ? [{ name: "Hip fold at the top", value: hipTDC.toFixed(0) + "°", verdict: hipTDC >= BANDS.hipTDC[0] && hipTDC <= BANDS.hipTDC[1] ? "OK" : "Watch", note: `Fitting window ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° depending on flexibility.` }] : []),
+      { name: "Knee at 6 o'clock", value: k + "°", verdict: word(kneeVerdict),
+        note: `Band ${kLo}–${kHi}° while riding — this is the saddle-height check. ±${kSd}° across ${kneeBDC.n} clearly-seen strokes${kneeBDC.n < kneeBDC.of ? ` of ${kneeBDC.of}` : ""}.` },
+      ...(toeBDC ? [{ name: "Foot at 6 o'clock", value: toeBDC.value.toFixed(0) + "° toe-down", verdict: word(toeVerdict),
+        note: `Band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}° toe-down at the bottom. ±${toeBDC.sd.toFixed(1)}° across your strokes.` }] : []),
+      ...(hipTDC ? [{ name: "Hip fold at the top", value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
+        note: `Fitting window ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° depending on flexibility. ±${hipTDC.sd.toFixed(1)}° across your strokes.` }] : []),
       { name: "Cadence", value: cadence.toFixed(0) + " rpm", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Research sweet spot ${BANDS.cadence[0]}–${BANDS.cadence[1]} rpm for experienced riders.` },
-      { name: "Torso angle", value: torso.toFixed(0) + "°", note: "Above horizontal. What it's worth in watts depends on speed — ride-file pairing comes next." },
+      { name: "Torso angle", value: torso.value.toFixed(0) + "°", note: "Above horizontal. What it's worth in watts depends on speed — ride-file pairing comes next." },
     ]),
   };
+}
+
+/* "Close" is a real answer: the number sits nearer the band edge than the
+   rider's own stroke-to-stroke spread, so neither side of the line is earned. */
+function word(v) {
+  return v === "ok" ? "OK" : v === "borderline" ? "Close" : v ? "Watch" : "";
 }
 
 // A number measured through a bad camera angle keeps its value and loses its verdict.

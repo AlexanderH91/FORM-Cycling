@@ -10,7 +10,7 @@ export async function renderHome(view, user) {
     .limit(30);
 
   const latest = sessions?.at(-1);
-  const knee = (s) => s?.report?.kneeBendBDC?.mean;
+  const knee = (s) => s?.report?.kneeBendBDC?.value ?? s?.report?.kneeBendBDC?.mean;
 
   view.innerHTML = `
   ${appbar(new Date().toLocaleDateString(undefined,{day:"numeric",month:"short"}))}

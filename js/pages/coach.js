@@ -30,7 +30,7 @@ function subjectFromHash() {
 /* A progression summary, built only from stored measurements. Every figure
    here came off a video; none is computed for effect. */
 function summarise(rows) {
-  const knee = (r) => r?.report?.kneeBendBDC?.mean;
+  const knee = (r) => r?.report?.kneeBendBDC?.value ?? r?.report?.kneeBendBDC?.mean;
   const measured = rows.filter((r) => knee(r) != null);
   if (!measured.length) return null;
   const first = measured[0], last = measured.at(-1);
