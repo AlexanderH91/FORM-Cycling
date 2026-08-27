@@ -5,7 +5,7 @@
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
 export const VERSION = "v2";
-export const BUILD = "2026-08-27-j";
+export const BUILD = "2026-08-27-k";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -61,6 +61,35 @@ export const VERDICT_SIGMAS = 1.5;
 /* Rides needed before the scatter between them is worth more than the
    assumption above. Below this, a close call stays a close call. */
 export const SETTLE_RIDES = 3;
+
+/* Two pose models, because they are wanted for opposite reasons.
+
+   The sweep runs over every sampled frame (hundreds), so it has to be small
+   and fast; it only needs to be good enough to find where the strokes are.
+   The fine model then re-reads the handful of frames the reported number is
+   actually computed from, where accuracy is the only thing that matters.
+
+   `heavy` is the most accurate of the three and is one word away, but it is
+   30 MB against full's 9.4 MB — a download a rider on cellular pays for in the
+   middle of an analysis. Move to it once the model is cached locally. */
+export const POSE_MODEL = {
+  sweep: "lite",
+  fine: "full",
+  /* The sweep model ships with the app. It used to be fetched from Google's
+     CDN at the moment analysis started, which meant a rider in a garage on one
+     bar of signal got "analysis failed" for a clip that was already on their
+     phone. The fine model stays remote: it is an enhancement, it is only ever
+     best-effort, and losing it costs accuracy rather than the whole read. */
+  local: { lite: new URL("../assets/mp/pose_landmarker_lite.task", import.meta.url).href },
+  url(name) {
+    return this.local[name]
+      ?? `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_${name}/float16/1/pose_landmarker_${name}.task`;
+  },
+};
+
+// How many strokes to re-read with the fine model. Each one costs a seek, and
+// seeking a MediaRecorder file has no index to help it.
+export const REFINE_STROKES = 12;
 
 export const MAX_RECORD_MS = 10 * 60 * 1000; // 10 minutes
 

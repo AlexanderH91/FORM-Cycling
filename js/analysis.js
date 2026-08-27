@@ -1,4 +1,4 @@
-import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES } from "./config.js";
+import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES } from "./config.js";
 
 /* On-device side-view analysis.
    MediaPipe Pose Landmarker (WASM) runs in the browser; the video never
@@ -6,23 +6,40 @@ import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES } from ".
    sample frames → landmarks → ankle-y cycle detection → per-stroke averages. */
 
 const MP_WASM = new URL("../assets/mp/", import.meta.url).href;
-const MP_MODEL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task";
+let filesetPromise = null;
+const fileset = () => (filesetPromise ??= (async () => {
+  const { FilesetResolver } = await import("./vendor/tasks-vision.js");
+  return FilesetResolver.forVisionTasks(MP_WASM);
+})());
 
-let landmarkerPromise = null;
-async function getLandmarker() {
-  if (!landmarkerPromise) {
-    landmarkerPromise = (async () => {
-      const { FilesetResolver, PoseLandmarker } =
-        await import("./vendor/tasks-vision.js");
-      const fileset = await FilesetResolver.forVisionTasks(MP_WASM);
-      return PoseLandmarker.createFromOptions(fileset, {
-        baseOptions: { modelAssetPath: MP_MODEL },
-        runningMode: "VIDEO", numPoses: 1,
-      });
-    })();
-  }
-  return landmarkerPromise;
+/* The GPU delegate is a large speed-up where it exists and simply absent on
+   some phones and lockdown-mode browsers, so it is attempted and then dropped
+   rather than assumed. A slower analysis is a far better outcome than one that
+   cannot start. */
+async function makeLandmarker(model, runningMode) {
+  const { PoseLandmarker } = await import("./vendor/tasks-vision.js");
+  const opts = (delegate) => ({
+    baseOptions: { modelAssetPath: POSE_MODEL.url(model), delegate },
+    runningMode, numPoses: 1,
+  });
+  const fs = await fileset();
+  try { return await PoseLandmarker.createFromOptions(fs, opts("GPU")); }
+  catch { return PoseLandmarker.createFromOptions(fs, opts("CPU")); }
 }
+
+const cache = new Map();
+const landmarker = (model, mode) => {
+  const key = `${model}:${mode}`;
+  if (!cache.has(key)) cache.set(key, makeLandmarker(model, mode));
+  return cache.get(key);
+};
+
+// The sweep model: small and quick, run over every sampled frame.
+const getLandmarker = () => landmarker(POSE_MODEL.sweep, "VIDEO");
+/* The fine model: slower and more accurate, run only on the frames a reported
+   number is computed from. Loaded lazily so a rider whose clip gates out never
+   pays for the download. */
+const getFineLandmarker = () => landmarker(POSE_MODEL.fine, "IMAGE");
 
 const deg = (r) => (r * 180) / Math.PI;
 
@@ -69,6 +86,16 @@ const sideVis = (j) => mean([j.hip, j.knee, j.ankle].map((q) => q.visibility ?? 
 /* One leg, chosen by which one this camera saw better across the WHOLE clip.
    `flipped` is how many frames would have gone the other way — a high count
    means the phone was not truly side-on and the two legs look alike. */
+/* Take at most `budget` items, evenly spaced across the run rather than the
+   first N — strokes early in a clip are the least settled ones. */
+export function spread(idxs, budget) {
+  if (budget < 1) return [];
+  if (idxs.length <= budget) return idxs;
+  if (budget === 1) return [idxs[idxs.length >> 1]];
+  return Array.from({ length: budget },
+    (_, i) => idxs[Math.round((i * (idxs.length - 1)) / (budget - 1))]);
+}
+
 export function dominantSide(frames) {
   const lWins = frames.filter((f) => sideVis(f.L) >= sideVis(f.R)).length;
   const side = lWins * 2 >= frames.length ? "L" : "R";
@@ -567,11 +594,54 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
   if (capture.grade === "F") { release(); return { gate: capture.reason, capture }; }
   if (rows.length < FPS * 5) { release(); return { gate: "We couldn't see you clearly for long enough. Check the framing — whole bike and rider, decent light — and film again.", capture }; }
 
-  onProgress(92, "Averaging across strokes…");
+  /* The reported knee angle comes from a dozen frames, not from all of them.
+     Those few are worth a slower, more accurate model — it is the cheapest
+     accuracy there is, because the cost scales with strokes rather than with
+     clip length. Everything here is best-effort: a refinement that fails
+     leaves the sweep's own numbers standing. */
+  async function refine(idxs, budget = REFINE_STROKES) {
+    const pick = spread(idxs, budget);
+    let fine;
+    try { fine = await getFineLandmarker(); } catch { return 0; }
+    if (!(await seekTo(video, 0, 6000))) return 0;
+    let done = 0;
+    for (const i of pick) {
+      if (!(await seekTo(video, rows[i].t, 3000))) continue;
+      await paintedFrame(video, 400);
+      let p;
+      try { p = fine.detect(video).landmarks?.[0]; } catch { break; }
+      if (!p) continue;
+      const raw = pickSide(p, side);
+      const hip = sq(raw.hip), knee = sq(raw.knee), ankle = sq(raw.ankle);
+      const sho = sq(raw.sho), heel = sq(raw.heel), toe = sq(raw.toe);
+      const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
+      Object.assign(rows[i], {
+        j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
+        conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
+        kneeBend: 180 - angleAt(hip, knee, ankle),
+        hip: angleAt(sho, hip, knee),
+        toeDown: -deg(Math.atan2(heel.y - toe.y, Math.abs(toe.x - heel.x) + 1e-9)),
+        refined: true,
+      });
+      done++;
+      onProgress(88 + (4 * done) / pick.length);
+    }
+    return done;
+  }
+
+  onProgress(87, "Finding the bottom of each stroke…");
   const ay = rows.map((r) => r.ankleY);
   const bdc = findPeaks(ay, FPS * 0.45, 0.25);
   const tdcIdx = findPeaks(ay.map((v) => -v), FPS * 0.45, 0.25);
   if (bdc.length < 5) { release(); return { gate: "We couldn't find steady pedaling in the part you selected. Move the trim to a section where you ride continuously.", capture }; }
+
+  /* Only now is it known which frames matter, which is the whole point: the
+     accurate model is spent on those and nothing else. */
+  onProgress(88, "Re-reading those strokes closely…");
+  let refined = 0;
+  try { refined = await refine(bdc); } catch { /* the sweep's numbers still stand */ }
+
+  onProgress(92, "Averaging across strokes…");
 
   // Row indices skip any frame the model could not read, so measure the stroke
   // period from the frames' own timestamps instead of assuming none were lost.
@@ -731,6 +801,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, history = []) 
        means the camera was not square. */
     leg: side === "L" ? "left" : "right",
     legFlips: flipped,
+    // How many of the measured strokes were re-read with the accurate model.
+    refined: { strokes: refined, model: POSE_MODEL.fine, sweep: POSE_MODEL.sweep },
     stillsFail,
     kneeBendBDC: { value: +kneeBDC.value.toFixed(1), sd: +kneeBDC.sd.toFixed(1),
                    strokes: kneeBDC.n, of: kneeBDC.of, centre: "median",

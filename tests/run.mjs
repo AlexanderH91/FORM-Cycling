@@ -19,7 +19,7 @@ const CONCURRENCY = Number(process.env.FORM_TEST_JOBS ?? 3);
 const TYPES = {
   ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript",
   ".css": "text/css", ".json": "application/json", ".svg": "image/svg+xml",
-  ".png": "image/png", ".wasm": "application/wasm", ".webmanifest": "application/manifest+json",
+  ".png": "image/png", ".wasm": "application/wasm", ".task": "application/octet-stream", ".webmanifest": "application/manifest+json",
 };
 
 const server = createServer(async (req, res) => {
