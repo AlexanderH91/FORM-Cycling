@@ -5,6 +5,12 @@ import { renderAnalyze } from "./pages/analyze.js";
 import { renderLocked } from "./pages/locked.js";
 import { renderProfile } from "./pages/profile.js";
 import { renderCoach } from "./pages/coach.js";
+import { BUILD } from "./config.js";
+
+/* Tell the badge in index.html which build the modules actually are. The two
+   strings are maintained separately on purpose: if they disagree, the browser
+   is running cached JavaScript and the badge says so. */
+window.FORM_BUILD_REPORT?.(BUILD);
 
 const view = document.getElementById("view");
 const nav = document.getElementById("nav");

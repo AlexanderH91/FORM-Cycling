@@ -137,3 +137,21 @@ preview voice, naming the reason on screen. Nothing breaks; it just isn't live.
 The report structure (fix card → conclusions → master video → collapsible measured
 cards) and the glass design tokens in `css/app.css` are intended to become the
 shared FORM report shell. Don't fork them — lift them.
+
+## Which build am I looking at?
+
+Tap the small `v1` pill in the top-right corner. It shows three things:
+
+- **page** — the build string in `index.html`, which arrives with the document
+- **scripts** — the build string in `js/config.js`, which arrives inside a module
+- **worker** — whether the network-first service worker is in control
+
+They are two separate strings on purpose. The page revalidates aggressively;
+modules can sit in the browser's cache for days. If the two disagree, the phone
+is running old JavaScript and the panel says so instead of letting it look like
+a broken feature. **Force refresh** clears every cache, drops the worker, and
+reloads on a URL the cache cannot answer.
+
+Bump both on every deploy: `BUILD` in `js/config.js` and `data-build` /
+`<meta name="form-build">` in `index.html`. `tests/version.test.mjs` fails if
+they drift apart.

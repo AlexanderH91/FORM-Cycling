@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0B0B0B">
 <title>FORM Cycling</title>
+<!-- Keep in step with BUILD in js/config.js. This copy travels with the page,
+     the other travels inside a cached module; the badge shows both so a stale
+     bundle is visible instead of looking like a broken feature. -->
+<meta name="form-build" content="v1 · 2026-08-27-g">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
@@ -36,7 +40,109 @@
       <span>Me</span></a>
    </div>
   </nav>
+
+  <!-- Written in the HTML, not by a script, so it still says something when the
+       modules are stale, broken, or never load at all. -->
+  <div id="ver" class="ver" data-build="2026-08-27-g" data-version="v1">
+    <button id="vertag" class="vertag" type="button" aria-label="Build info">
+      v1<i id="verdot" class="verdot"></i>
+    </button>
+    <div id="verpanel" class="verpanel glass hidden">
+      <div class="verrow"><span>page</span><b id="verhtml">—</b></div>
+      <div class="verrow"><span>scripts</span><b id="verjs">loading…</b></div>
+      <div class="verrow"><span>worker</span><b id="versw">—</b></div>
+      <p id="vermsg" class="vermsg"></p>
+      <button id="verflush" class="verbtn" type="button">Force refresh</button>
+    </div>
+  </div>
 </div>
-<script type="module" src="js/main.js"></script>
+
+<!-- Classic script, on purpose: it has to run even when the module graph
+     fails, because that is exactly the case it exists to report. -->
+<script>
+(function () {
+  var box   = document.getElementById("ver");
+  var HTML  = box.dataset.build;
+  var tag   = document.getElementById("vertag");
+  var dot   = document.getElementById("verdot");
+  var panel = document.getElementById("verpanel");
+  var msg   = document.getElementById("vermsg");
+  var jsEl  = document.getElementById("verjs");
+  var swEl  = document.getElementById("versw");
+  document.getElementById("verhtml").textContent = HTML;
+
+  function state(kind, text) {
+    dot.className = "verdot " + kind;
+    msg.textContent = text;
+    msg.className = "vermsg " + kind;
+  }
+
+  /* The modules call this once they are running. Their build string comes from
+     js/config.js, so it is the cached copy — a mismatch with HTML is proof the
+     browser is running old code. */
+  var reported = false, stale = false;
+  window.FORM_BUILD_REPORT = function (build) {
+    reported = true;
+    jsEl.textContent = build;
+    if (build === HTML) { state("ok", "Up to date."); return; }
+    stale = true;
+    state("bad", "Scripts are cached from an older deploy. Tap Force refresh.");
+    selfHeal();
+  };
+  setTimeout(function () {
+    if (reported) return;
+    stale = true;
+    jsEl.textContent = "no answer";
+    state("bad", "The app scripts never started. Tap Force refresh; if it repeats, the deploy is broken.");
+    selfHeal();
+  }, 6000);
+
+  /* Reload only when it will actually change the answer: once the worker is in
+     control it refetches every module with no-store, so the second load gets
+     the real deploy. Reloading before that just fetches the same stale cache
+     again, and reloading a healthy page for nothing costs a visible flash. */
+  function selfHeal() {
+    if (!stale || !navigator.serviceWorker || !navigator.serviceWorker.controller) return;
+    try {
+      if (sessionStorage.getItem("form_sw_boot")) return;
+      sessionStorage.setItem("form_sw_boot", "1");
+    } catch (e) { return; }
+    state("bad", "Old scripts found — reloading with fresh ones…");
+    location.reload();
+  }
+
+  tag.onclick = function () { panel.classList.toggle("hidden"); };
+
+  document.getElementById("verflush").onclick = async function () {
+    this.textContent = "Clearing…";
+    try {
+      if (window.caches) for (var k of await caches.keys()) await caches.delete(k);
+      if (navigator.serviceWorker) {
+        var regs = await navigator.serviceWorker.getRegistrations();
+        for (var r of regs) await r.unregister();
+      }
+      sessionStorage.removeItem("form_sw_boot");
+    } catch (e) { /* a blocked cache API must not stop the reload */ }
+    // A new query string is a new URL, so nothing in the HTTP cache can answer it.
+    location.replace(location.pathname + "?fresh=" + Date.now() + location.hash);
+  };
+
+  /* Network-first worker. Without it, a no-build-step app has no way to tell
+     the browser that js/*.js changed, and iOS will happily serve last week's. */
+  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    swEl.textContent = navigator.serviceWorker.controller ? "active" : "starting…";
+    navigator.serviceWorker.register("sw.js")
+      .then(function (reg) { reg.update(); })
+      .catch(function () { swEl.textContent = "unavailable"; });
+    navigator.serviceWorker.addEventListener("controllerchange", function () {
+      swEl.textContent = "active";
+      selfHeal();
+    });
+  } else {
+    swEl.textContent = "not supported";
+  }
+})();
+</script>
+<script type="module" src="js/main.js?v=2026-08-27-g"></script>
 </body>
 </html>

@@ -249,3 +249,26 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .spark i{flex:1;background:rgba(242,194,48,.35);border-radius:4px 4px 0 0;min-height:6px}
 .spark i.last{background:var(--gold)}
 .footnote{font-family:var(--mono);font-size:10.5px;color:var(--muted);letter-spacing:.05em;line-height:1.7;margin-top:20px}
+
+/* build badge — small enough to ignore, always there when you need it */
+.ver{position:fixed;top:calc(6px + env(safe-area-inset-top));right:8px;z-index:60;
+  font-family:var(--mono);display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.vertag{display:flex;align-items:center;gap:5px;cursor:pointer;
+  background:rgba(0,0,0,.35);border:1px solid var(--glassline);color:var(--muted);
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;
+  padding:3px 7px;border-radius:999px;opacity:.65}
+.vertag:active{opacity:1}
+.verdot{width:5px;height:5px;border-radius:50%;background:var(--muted);display:block}
+.verdot.ok{background:#4FB477}
+.verdot.bad{background:#E0603A}
+/* Nearly opaque, unlike the rest of the glass: this panel sits over the app bar
+   and has to stay readable when it is telling you something is wrong. */
+.verpanel{width:min(272px,86vw);padding:12px 13px;border-radius:14px;
+  background:rgba(14,14,14,.96)}
+.verrow{display:flex;justify-content:space-between;gap:12px;font-size:11px;color:var(--muted);
+  letter-spacing:.04em;line-height:1.9}
+.verrow b{color:var(--ink);font-weight:500}
+.vermsg{font-family:var(--body);font-size:12px;line-height:1.45;margin:8px 0 10px;color:var(--muted)}
+.vermsg.bad{color:#E0603A}
+.verbtn{width:100%;cursor:pointer;background:var(--gold);color:#0B0B0B;border:none;
+  border-radius:10px;padding:9px 12px;font-family:var(--body);font-weight:600;font-size:13px}

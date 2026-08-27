@@ -1,6 +1,6 @@
 import { supa } from "../supa.js";
 import { appbar } from "../ui.js";
-import { BUILD } from "../config.js";
+import { BUILD, VERSION } from "../config.js";
 
 export async function renderProfile(view, user) {
   const { data: rows } = await supa.from("cycling_sessions")
@@ -25,7 +25,7 @@ export async function renderProfile(view, user) {
     <button class="btn secondary" id="save">Save</button>
   </div>
   <button class="btn secondary" id="signout">Sign out</button>
-  <div class="footnote">Build ${BUILD}<br>Videos are analyzed on your phone and never uploaded. Only measurement results are stored in your account.</div>`;
+  <div class="footnote">${VERSION} · build ${BUILD}<br>Videos are analyzed on your phone and never uploaded. Only measurement results are stored in your account.</div>`;
 
   view.querySelector("#save").onclick = async () => {
     const h = +view.querySelector("#height").value;
