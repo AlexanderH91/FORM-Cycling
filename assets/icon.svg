@@ -1,13 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
   <rect width="128" height="128" rx="28" fill="#CDEB5A"/>
   <g id="mark" transform="translate(28.94 16.03) scale(1.5936)">
-    <!-- The arc stops where the track begins. The infield is left open, so the
-         volt tile reads straight through it — a solid badge would need punching
-         out, a ring does not. -->
-    <path d="M6 40 C7.56 25.18 13.38 15.23 22.03 11.57" fill="none" stroke="#0C0E11" stroke-width="5.5" stroke-linecap="round"/>
-    <rect x="26.4" y="4.3" width="17.2" height="12.6" rx="6.3" fill="none" stroke="#0C0E11" stroke-width="2.4"/>
-    <rect x="29.1" y="7" width="11.8" height="7.2" rx="3.6" fill="none" stroke="#0C0E11" stroke-width="1.2"/>
-    <path d="M35 14.2 L35 15.75" stroke="#0C0E11" stroke-width="1.2" stroke-linecap="round"/>
+    <!-- Arc and outer lane share one weight, so the mark is a single stroke
+         that sweeps up and closes into a track. The infield is left open. -->
+    <path d="M6 40 C7.8 22.9 15.27 12.28 26.22 10.33" fill="none" stroke="#0C0E11" stroke-width="4.8" stroke-linecap="round"/>
+    <rect x="26.4" y="4.1" width="17.6" height="13.4" rx="6.7" fill="none" stroke="#0C0E11" stroke-width="4.8"/>
+    <rect x="29.9" y="7.7" width="10.6" height="6.2" rx="3.1" fill="none" stroke="#0C0E11" stroke-width="1.35"/>
+    <path d="M35.2 13.9 L35.2 15.4" stroke="#0C0E11" stroke-width="1.35" stroke-linecap="round"/>
   </g>
   <text id="word" x="64" y="100.8" text-anchor="middle" fill="#0C0E11"
         font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15.7" font-weight="600" letter-spacing="0.6">running</text>
