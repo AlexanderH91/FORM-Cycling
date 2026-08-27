@@ -41,9 +41,7 @@ export async function renderHome(view, user) {
          2 · Mark the part of the clip where you're pedaling steadily.<br>
          3 · Your phone analyzes it — nothing is uploaded, only the results are saved.</p>
     </div>`}
-  <p style="margin-top:14px"><a class="btn" href="#/analyze">Start a new analysis</a>
-    ${latest ? `<a class="btn secondary coach-cta" href="#/coach?about=progress">
-      <span class="cmic"></span>Talk about your progress</a>` : ""}</p>
+  <p style="margin-top:14px"><a class="btn" href="#/analyze">Start a new analysis</a></p>
   <div class="footnote">FORM never claims what it can't measure. Angles are averaged across every pedal stroke in your clip.</div>
   `;
 }
