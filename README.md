@@ -134,11 +134,17 @@ force precisely because it is never a judgement about you. That also means the
 on-video grammar is identical across the three apps, so the shared report shell
 transfers with nothing to reconcile.
 
-The mark is the FORM arc with a footstrike at its tip. On dark grounds the burst
-is volt and the sole is dark; on volt grounds (the nav disc, the app icon) it
-inverts — dark burst, sole punched back out — because two solid shapes on the
-arc's tip merge into a blob. A chainring's teeth survive that; a footprint's
-silhouette does not.
+The mark is the FORM arc with a runner mid-stride at its tip — knee driven
+forward, trailing heel kicked up, which is the pose that separates running from
+walking. On dark grounds the burst is volt and the figure is dark; on volt
+grounds (the nav disc, the app icon) it inverts — dark burst, figure punched
+back out — because a solid shape on the arc's tip merges into a blob. A
+chainring's teeth survive that; a running figure's silhouette does not.
+
+The badge is drawn as a heavy stroked pictogram rather than a filled outline so
+it stays solid at 24 px in the app bar, where any glyph is really just a
+textured dot. It is authored once in `js/ui.js`; `assets/icon.svg` and the
+rasteriser that produces `assets/icon-180.png` carry the same coordinates.
 
 ## Voice coach setup (one secret, set once)
 

@@ -148,13 +148,13 @@ label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform
 /* centre action */
 .nav a.cta{gap:0;color:var(--ink)}
 /* On the volt disc the accent IS the ground, so the mark inverts: the burst
-   goes dark and the footstrike is punched back out in volt. Dropping the burst
-   and darkening the sole (which is what Cycling does with its chainring) would
-   merge two solid shapes into the arc's tip and read as a blob — a cog's teeth
-   survive that, a footprint's silhouette does not. */
+   goes dark and the runner is punched back out in volt. Dropping the burst and
+   darkening the figure (which is what Cycling does with its chainring) would
+   merge it into the arc's tip and read as a blob — a cog's teeth survive that,
+   a running figure's silhouette does not. */
 .nav a.cta .disc{
   width:60px;height:60px;border-radius:50%;background:var(--volt);
-  color:var(--ground);--burst:#0C0E11;--sole:#CDEB5A;
+  color:var(--ground);--burst:#0C0E11;--runner:#CDEB5A;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
   box-shadow:0 8px 22px rgba(205,235,90,.26);
 }
