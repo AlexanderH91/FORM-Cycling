@@ -124,11 +124,14 @@ export function kneeOverAxle(rows, fps) {
     });
     const femur = median(three.map((i) => rows[i].femur));
     if (!(femur > 1e-3)) return null;
+    const mid = median(offs);
     return {
       // in thigh-lengths, which needs no assumption about the rider at all
-      ofFemur: median(offs) / femur,
+      ofFemur: mid / femur,
       sd: sd(offs) / femur,
       n: offs.length,
+      // the stroke closest to the reported figure, so the still shows it
+      at: three[offs.reduce((b, v, i) => (Math.abs(v - mid) < Math.abs(offs[b] - mid) ? i : b), 0)],
     };
   }
 
@@ -232,14 +235,14 @@ export function pool(reads) {
   const vals = clean.map((r) => r.value);
   const centre = median(vals);
   if (clean.length === 1)
-    return { value: centre, u: uncertainty(clean[0]), rides: 1, settled: false, lo: centre, hi: centre };
+    return { value: centre, u: uncertainty(clean[0]), rides: 1, vals, settled: false, lo: centre, hi: centre };
   const between = sd(vals) / Math.sqrt(vals.length);
   /* Never claim to be surer than one ride's own floor divided across the rides
      — a run of rides that happen to agree closely is not proof the camera was
      in the same place each time. */
   const u = Math.max(between, ANGLE_FLOOR_DEG / Math.sqrt(vals.length));
   return {
-    value: centre, u, rides: vals.length,
+    value: centre, u, rides: vals.length, vals,
     settled: vals.length >= SETTLE_RIDES,
     lo: Math.min(...vals), hi: Math.max(...vals),
   };
@@ -305,14 +308,13 @@ export function hasPicture(ctx, w, h) {
 /* Grab the frame a number actually came from and draw that number on it.
    `draw` returns false when the joints it needs are not visible in this exact
    frame — then the still is shown with nothing drawn rather than a guess. */
-async function keyframe(video, lm, t, draw, side, maxW = 720) {
+async function still(video, lm, t, draw, side, maxW = 720) {
   /* The sampling pass leaves the video at the end of the clip, so grabbing a
      keyframe means a long seek backwards — and in a MediaRecorder file, which
      carries no seek index, that is far slower than the forward steps the loop
      makes. The loop's 2.5s budget silently turned every keyframe into null and
      the report lost its stills. Rewind first, then go forward to the frame,
      with a budget that suits a one-off. */
-  if (!(await seekTo(video, 0, 6000))) return { fail: "the clip would not rewind" };
   if (!(await seekTo(video, t, 8000))) return { fail: "the clip would not seek to that moment" };
   const vw = video.videoWidth, vh = video.videoHeight;
   if (!vw || !vh) return { fail: "the video reported no size" };
@@ -334,8 +336,61 @@ async function keyframe(video, lm, t, draw, side, maxW = 720) {
   }
 
   const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
-  const drawn = p ? draw(ctx, pickSide(p, side), c.width, c.height) !== false : false;
-  return { src: c.toDataURL("image/jpeg", 0.82), drawn };
+  /* The draw callback returns the points it drew, or false when the joints it
+     needs are not visible in this exact frame. */
+  const focus = p ? draw(ctx, pickSide(p, side), c.width, c.height) : false;
+  const drawn = focus !== false;
+  return { src: crop(c, drawn ? focus : null), drawn };
+}
+
+/* A whole portrait phone frame per card turns the report into a scroll of
+   living rooms. Crop to what is being measured — the joints, with enough
+   around them to see it is a person on a bike — and the evidence gets both
+   clearer and shorter. */
+function crop(src, points, maxW = 640) {
+  if (!points?.length) return src.toDataURL("image/jpeg", 0.82);
+  const xs = points.map((q) => q.x), ys = points.map((q) => q.y);
+  let x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(...ys), y1 = Math.max(...ys);
+  // Generous padding: a knee angle in isolation is unreadable, a knee angle
+  // with the bike around it is obvious.
+  const padX = Math.max(0.10, (x1 - x0) * 0.75), padY = Math.max(0.06, (y1 - y0) * 0.35);
+  x0 -= padX; x1 += padX; y0 -= padY; y1 += padY;
+
+  // Keep it from becoming a letterbox slit either way.
+  const wantAR = 4 / 3;
+  let w = (x1 - x0) * src.width, h = (y1 - y0) * src.height;
+  let cx = ((x0 + x1) / 2) * src.width, cy = ((y0 + y1) / 2) * src.height;
+  if (w / h < wantAR) w = h * wantAR; else h = w / wantAR;
+  w = Math.min(w, src.width); h = Math.min(h, src.height);
+  cx = Math.min(src.width - w / 2, Math.max(w / 2, cx));
+  cy = Math.min(src.height - h / 2, Math.max(h / 2, cy));
+
+  const out = document.createElement("canvas");
+  const scale = Math.min(1, maxW / w);
+  out.width = Math.round(w * scale); out.height = Math.round(h * scale);
+  out.getContext("2d").drawImage(src, cx - w / 2, cy - h / 2, w, h, 0, 0, out.width, out.height);
+  return out.toDataURL("image/jpeg", 0.85);
+}
+
+// Dashed = a reference, never the rider's own body (line grammar).
+function plumb(ctx, from, to, colour, w, h) {
+  ctx.save();
+  ctx.setLineDash([Math.max(5, w * 0.012), Math.max(5, w * 0.012)]);
+  ctx.lineWidth = Math.max(2, w * 0.004);
+  ctx.strokeStyle = colour;
+  ctx.beginPath();
+  ctx.moveTo(from.x * w, from.y * h);
+  ctx.lineTo(to.x * w, to.y * h);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function dot(ctx, pt, colour, w, h) {
+  ctx.fillStyle = colour;
+  ctx.beginPath();
+  ctx.arc(pt.x * w, pt.y * h, Math.max(4, w * 0.008), 0, Math.PI * 2);
+  ctx.fill();
 }
 
 /* How much the footage can be trusted, from the footage itself.
@@ -475,15 +530,34 @@ const amplitude = (a) => Math.max(...a) - Math.min(...a);
    Returns null when the nearest analysed frame is too far away — the model
    found nothing there, and a stale skeleton on a moving rider is exactly the
    "drawing without a measurement" the rules forbid. */
+/* The clip is sampled at 15 fps and plays at 30 or 60, so snapping to the
+   nearest sample leaves the skeleton up to a frame and a half behind the leg —
+   at 85 rpm that is a visible chunk of a pedal stroke. Interpolate between the
+   two samples either side instead, and only give up when the gap is genuinely
+   too wide to bridge (the model lost the rider there, and nothing is drawn). */
 export function overlayAt(track, t, tol = 0.12) {
   if (!track?.length) return null;
   let lo = 0, hi = track.length - 1;
   while (lo < hi) { const mid = (lo + hi) >> 1; if (track[mid].t < t) lo = mid + 1; else hi = mid; }
-  const a = track[Math.max(0, lo - 1)], b = track[lo];
-  const f = Math.abs(a.t - t) <= Math.abs(b.t - t) ? a : b;
-  if (Math.abs(f.t - t) > tol) return null;
-  const [lo_, hi_] = BANDS.kneeBendBDC;
-  return { ...f, inBand: f.knee >= lo_ && f.knee <= hi_ };
+  const b = track[lo], a = track[Math.max(0, lo - 1)];
+  const near = Math.abs(a.t - t) <= Math.abs(b.t - t) ? a : b;
+  if (Math.abs(near.t - t) > tol) return null;
+
+  const [bLo, bHi] = BANDS.kneeBendBDC;
+  const span = b.t - a.t;
+  // Same sample on both sides, or a gap wide enough that sliding between them
+  // would invent a position the rider never held.
+  if (a === b || span <= 0 || span > tol) {
+    return { ...near, inBand: near.knee >= bLo && near.knee <= bHi };
+  }
+  const f = Math.min(1, Math.max(0, (t - a.t) / span));
+  const mix = (x, y) => x + (y - x) * f;
+  const j = {};
+  for (const key of Object.keys(a.j)) {
+    j[key] = { x: mix(a.j[key].x, b.j[key].x), y: mix(a.j[key].y, b.j[key].y) };
+  }
+  const knee = mix(a.knee, b.knee);
+  return { t, j, knee, inBand: knee >= bLo && knee <= bHi };
 }
 
 /* FRONT VIEW — how far each knee wanders sideways over the stroke.
@@ -592,7 +666,13 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     frames.sampled++;
     /* Collect both legs and decide later. Nothing here may depend on which leg
        we end up measuring, because that answer needs the whole clip. */
-    if (p) seenFrames.push({ t: times[i], L: SIDES.L(p), R: SIDES.R(p), hipL: p[23], hipR: p[24] });
+    /* video.currentTime, not times[i]. A seek lands on the nearest decodable
+       frame, which can be tens of milliseconds from where it was aimed — and
+       labelling a frame with the time it was ASKED for rather than the time it
+       is AT is what put the overlay a fraction of a pedal stroke away from the
+       rider's leg. At 85 rpm a revolution is 0.7s, so 60ms is most of a
+       thigh. */
+    if (p) seenFrames.push({ t: video.currentTime, L: SIDES.L(p), R: SIDES.R(p), hipL: p[23], hipR: p[24] });
     onProgress(8 + (82 * i) / times.length);
   }
 
@@ -712,9 +792,21 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     if (!vals.length) return null;
     return { value: median(vals), sd: sd(vals), n: vals.length, of: idxs.length };
   };
+
+  /* Two models read a joint slightly differently. Averaging some frames from
+     one and some from the other adds their disagreement to what is reported as
+     the rider's own stroke-to-stroke spread — which is exactly what happened
+     when refinement covered 12 of 14 strokes and left 2 behind: ±12.5°, on a
+     rider who had been reading ±3°. So measure from one model or the other,
+     never a mixture. */
+  const measured = (idxs) => {
+    const fine = idxs.filter((i) => rows[i].refined);
+    return fine.length >= 5 ? fine : idxs.filter((i) => !rows[i].refined);
+  };
+  const bdcM = measured(bdc);
   const allIdx = rows.map((_, i) => i);
-  const kneeBDC = stat(bdc, "kneeBend");
-  const toeBDC = stat(bdc, "toeDown");
+  const kneeBDC = stat(bdcM, "kneeBend");
+  const toeBDC = stat(bdcM, "toeDown");
   const hipTDC = tdcIdx.length ? stat(tdcIdx, "hip") : null;
   const torso = stat(allIdx, "torso");
   if (!kneeBDC) { release(); return { gate: "We saw you pedalling but never clearly enough at the bottom of the stroke to measure the knee. Move the phone to saddle height, 2–3 m out to the side, and film again.", capture }; }
@@ -733,98 +825,184 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   const pv = pooled.value.toFixed(0);
   const edgeSide = pooled.value < kLo ? "below" : pooled.value > kHi ? "above" : null;
 
-  /* One fix per report, ranked: saddle (knee out of band) → foot far out →
-     torso note. What outranks all of them is an honest statement of where the
-     rider actually sits, because a prescription built on a coin flip is worse
-     than no prescription. */
+  /* Bend at the bottom is a saddle-height reading, and the direction matters:
+     LESS bend than the band means the leg is straightening too far, which is a
+     saddle that is too HIGH and comes down. More bend means it goes up. An
+     earlier version of the settled branch had this backwards and would have
+     told a rider to raise a saddle that was already too high. */
+  const tooStraight = pooled.value < kLo;          // saddle high → lower it
+  const saddleMove = (mm) => tooStraight
+    ? `Lower the saddle ${mm}, ride a minute, film again.`
+    : `Raise the saddle ${mm}, ride a minute, film again.`;
+
+  /* What it actually does for the riding. Every fix has to answer "and what
+     would that get me?" — a number and a millimetre count on their own are a
+     measurement, not coaching. */
+  const consequence = tooStraight
+    ? "A leg that straightens too far at the bottom makes you reach for the pedal, so the hips rock side to side to follow it and the load shifts onto the back of the knee and the hamstring. Riders who bring the saddle down into the band usually notice steadier hips on long efforts and less ache behind the knee afterwards."
+    : "A knee still folded at the bottom never gets through its strongest part of the push, and the load sits on the front of the knee. Riders who bring the saddle up into the band usually find the pedal stroke feels less cramped and they can hold a bigger gear at the same effort.";
+
+  /* Rides only "agree" if they all land on the same side of the band. Reads
+     spanning 28° to 39° are not a rider who sits consistently below it — they
+     are a rider whose reads disagree, and saying otherwise would be the app
+     inventing a consistency the data does not have. */
+  const sameSide = pooled.vals.every((v) => v < kLo) || pooled.vals.every((v) => v > kHi);
+  const spread = pooled.hi - pooled.lo;
+
+  /* One fix per report, ranked: an honest statement of where the rider sits
+     outranks any prescription, because a change built on a coin flip is worse
+     than no change. */
   let fix;
-  if (pooled.settled && pooledVerdict === "borderline" && edgeSide)
-    /* Settled, and settled ON the line. This is a real finding, not a failure
-       to measure: the rider is consistently at the edge of the band, and the
-       action that follows is correspondingly small. Saying "too close to call"
-       again here would be false modesty — the reads agree. */
+  if (pooled.settled && !sameSide && spread > kHi - kLo)
     fix = {
-      title: edgeSide === "below" ? "You ride at the bottom edge" : "You ride at the top edge",
+      title: "Your rides do not agree yet",
+      line: `Across ${pooled.rides} rides your knee has read anywhere from ${pooled.lo.toFixed(0)}° to ${pooled.hi.toFixed(0)}° at the bottom — a spread wider than the ${kLo}–${kHi}° band itself. Your saddle did not move that much between rides, so this is the filming, not you.`,
+      cue: "Film from the same spot each time: phone at saddle height, straight out to the side, whole bike in frame, and trim to a stretch where you are pedalling steadily rather than starting or stopping.",
+      why: "Until two rides filmed the same way land on the same answer, no saddle number here is worth acting on. Getting the camera consistent is the one thing that makes everything else in this report mean something.",
+    };
+  else if (pooled.settled && pooledVerdict === "borderline" && edgeSide)
+    fix = {
+      title: tooStraight ? "You ride at the bottom edge" : "You ride at the top edge",
       line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom, every one of them between ${pooled.lo.toFixed(0)}° and ${pooled.hi.toFixed(0)}°. The band runs ${kLo}–${kHi}°, so you sit just ${edgeSide} it — consistently. That agreement across separate days and separate camera setups is the evidence; no single ride could give it.`,
-      cue: edgeSide === "below"
-        ? `Raising the saddle 2–3 mm would put you inside the band. That is small enough that comfort decides: if nothing aches and the power feels good, this is a fine place to ride.`
-        : `Dropping the saddle 2–3 mm would put you inside the band. That is small enough that comfort decides: if nothing aches and the power feels good, this is a fine place to ride.`,
+      cue: tooStraight
+        ? "Two to three millimetres down would put you inside the band — about a third of the width of the marks on a seatpost."
+        : "Two to three millimetres up would put you inside the band — about a third of the width of the marks on a seatpost.",
+      why: `At this distance from the band the effect is small and comfort should decide it. ${consequence} If nothing aches and the power feels good where you are, this is a fine place to ride.`,
     };
   else if (pooled.settled && pooledVerdict === "ok")
     fix = {
       title: "Saddle height holds up",
       line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom, inside the ${kLo}–${kHi}° band every time.`,
       cue: "Nothing to change here. Film again after any change to the bike or the shoes.",
+      why: "Saddle height is the setting the rest of a fit is built on, so having it settled means the next thing worth looking at is how your knees track — which is the front view.",
     };
-  else if (pooledVerdict === "low")
+  else if (pooledVerdict === "low" || pooledVerdict === "high")
     fix = {
-      title: "Saddle looks high",
-      line: `Your knee only bends ${pv}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""} — the band runs ${kLo}–${kHi}°, and that gap is bigger than the margin of error on the read (±${pooled.u.toFixed(1)}°).`,
-      cue: "Drop the saddle 5 mm, ride a minute, film again.",
-    };
-  else if (pooledVerdict === "high")
-    fix = {
-      title: "Saddle looks low",
-      line: `Your knee stays bent ${pv}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""} — the band runs ${kLo}–${kHi}°, and that gap is bigger than the margin of error on the read (±${pooled.u.toFixed(1)}°).`,
-      cue: "Raise the saddle 5 mm, ride a minute, film again.",
+      title: tooStraight ? "Saddle looks high" : "Saddle looks low",
+      line: `Your knee ${tooStraight ? "only bends" : "stays bent"} ${pv}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""} — the band runs ${kLo}–${kHi}°, and that gap is bigger than the margin of error on the read (±${pooled.u.toFixed(1)}°).`,
+      cue: saddleMove("5 mm"),
+      why: consequence,
     };
   else if (pooledVerdict === "borderline")
-    /* Not settled yet. The cue names the ride count, because the previous
-       version promised that another ride would decide it and then never
-       looked at the earlier ones. */
     fix = {
       title: "Too close to call — one more read",
       line: `Your knee bends ${k}° at the bottom and the band runs ${kLo}–${kHi}°. Averaged over ${kneeBDC.n} strokes that centre is good to about ±${kU.toFixed(1)}°, which still reaches across the edge of the band.`,
       cue: `Ride ${pooled.rides} of ${SETTLE_RIDES}. Film again in the same spot — FORM pools your rides, and how closely they agree is what settles it.`,
+      why: "Moving a saddle on a reading this close is guesswork, and guesswork on saddle height is how people end up chasing knee pain around the bike. One more ride costs ten minutes and settles it.",
     };
   else if (toeBDC && toeVerdict === "high" && toeBDC.value > BANDS.footToeDown6[1] + 3)
-    fix = { title: "Very toe-down at the bottom", line: `Your foot points ${toeBDC.value.toFixed(0)}° down at the bottom of the stroke (band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}°).`, cue: "Think about dropping your heel through the bottom of the stroke — like scraping mud off the shoe." };
+    fix = {
+      title: "Very toe-down at the bottom",
+      line: `Your foot points ${toeBDC.value.toFixed(0)}° down at the bottom of the stroke (band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}°).`,
+      cue: "Think about dropping your heel through the bottom of the stroke — like scraping mud off the shoe.",
+      why: "Pointing the toe hard at the bottom does the work with the calf instead of the big muscles above the knee, which is a smaller engine that tires sooner. It also reads as a saddle slightly too high, so it is worth settling alongside the number above.",
+    };
   else
-    fix = { title: "Position holds up — keep riding", line: `Knee ${k}° at the bottom, cadence ${cadence.toFixed(0)} rpm — the basics are in their bands.`, cue: "Film again in a month, or after any change to the bike." };
+    fix = {
+      title: "Position holds up — keep riding",
+      line: `Knee ${k}° at the bottom, cadence ${cadence.toFixed(0)} rpm — the basics are in their bands.`,
+      cue: "Film again in a month, or after any change to the bike.",
+      why: "Nothing here is costing you power or comfort. The next gains are in how your knees track and how level you sit, which need the front and rear views.",
+    };
 
   /* The picture has to be of the stroke the number describes, so show the one
      closest to the average rather than an arbitrary or best-looking frame. */
-  onProgress(96, "Pulling the frames we measured on…");
+  /* EVERY CARD GETS ITS OWN FRAME.
+     A number in a box is an assertion; the same number drawn on the rider at
+     the moment it was taken is evidence. One still per measurement, pulled in
+     time order after a single rewind, because seeking backwards through a
+     MediaRecorder file is the slow part. */
+  onProgress(95, "Pulling the frame behind each number…");
+
   const closestTo = (idxs, key, target) =>
     idxs.reduce((best, i) => (Math.abs(rows[i][key] - target) < Math.abs(rows[best][key] - target) ? i : best), idxs[0]);
 
-  const keyframes = [];
-  /* When a still cannot be made, SAY so. Silently dropping the section is how
-     three rounds went by with "no picture references" and no way to tell
-     whether the grab failed, the frame was blank, or the code never ran. */
-  let stillsFail = null;
-  try {
-    const bdcRow = closestTo(bdc, "kneeBend", kneeBDC.mean);
-    const bdcShot = await keyframe(video, lm, rows[bdcRow].t, (ctx, j, w, h) => {
-      if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
-      limb(ctx, [j.hip, j.knee, j.ankle], pooledVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
-      tag(ctx, `${rows[bdcRow].kneeBend.toFixed(0)}\u00b0`, j.knee, pooledVerdict === "ok" ? IN_BAND : OUT_OF_BAND, w, h);
-    }, side);
-    if (bdcShot.fail) stillsFail = bdcShot.fail;
-    else keyframes.push({
-      ...bdcShot, label: "Bottom of the stroke · 6 o'clock",
-      caption: bdcShot.drawn
-        ? `Knee ${rows[bdcRow].kneeBend.toFixed(0)}\u00b0 on this stroke — the average across all ${bdc.length} is ${kneeBDC.mean.toFixed(0)}\u00b0.`
-        : "We couldn't see hip, knee and ankle clearly enough in this frame to draw on it.",
-    });
+  const kneeColour = pooledVerdict === "ok" ? IN_BAND : OUT_OF_BAND;
+  const kneeRow = closestTo(bdcM, "kneeBend", kneeBDC.value);
+  const specs = [
+    {
+      key: "knee", row: kneeRow,
+      caption: `Knee ${rows[kneeRow].kneeBend.toFixed(0)}\u00b0 on this stroke. The card's ${k}\u00b0 is the middle of ${kneeBDC.n} strokes like it.`,
+      draw: (ctx, j, w, h) => {
+        if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
+        limb(ctx, [j.hip, j.knee, j.ankle], kneeColour, w, h);
+        tag(ctx, `${rows[kneeRow].kneeBend.toFixed(0)}\u00b0`, j.knee, kneeColour, w, h);
+        return [j.hip, j.knee, j.ankle];
+      },
+    },
+  ];
 
-    if (hipTDC != null && tdcIdx.length) {
-      const tdcRow = closestTo(tdcIdx, "hip", hipTDC);
-      const hipOk = hipTDC >= BANDS.hipTDC[0] && hipTDC <= BANDS.hipTDC[1];
-      const tdcShot = await keyframe(video, lm, rows[tdcRow].t, (ctx, j, w, h) => {
+  if (toeBDC) {
+    const toeRow = closestTo(bdcM, "toeDown", toeBDC.value);
+    const toeColour = toeVerdict === "ok" ? IN_BAND : OUT_OF_BAND;
+    specs.push({
+      key: "foot", row: toeRow,
+      caption: `Your foot at the bottom of this stroke, ${rows[toeRow].toeDown.toFixed(0)}\u00b0 toe-down. The dashed line is level.`,
+      draw: (ctx, j, w, h) => {
+        if (!SEEN(j.heel) || !SEEN(j.toe)) return false;
+        // dashed = the level reference the foot is measured against
+        plumb(ctx, { x: j.heel.x, y: j.heel.y }, { x: j.toe.x, y: j.heel.y }, "#9C9A93", w, h);
+        limb(ctx, [j.heel, j.toe], toeColour, w, h);
+        tag(ctx, `${rows[toeRow].toeDown.toFixed(0)}\u00b0`, j.toe, toeColour, w, h);
+        return [j.heel, j.toe, j.knee];
+      },
+    });
+  }
+
+  if (hipTDC && tdcIdx.length) {
+    const tdcRow = closestTo(tdcIdx, "hip", hipTDC.value);
+    const hipColour = verdictFor(hipTDC, BANDS.hipTDC) === "ok" ? IN_BAND : OUT_OF_BAND;
+    specs.push({
+      key: "hip", row: tdcRow,
+      caption: `The top of this stroke, where your hip is most closed — ${rows[tdcRow].hip.toFixed(0)}\u00b0 between torso and thigh.`,
+      draw: (ctx, j, w, h) => {
         if (!SEEN(j.sho) || !SEEN(j.hip) || !SEEN(j.knee)) return false;
-        limb(ctx, [j.sho, j.hip, j.knee], hipOk ? IN_BAND : OUT_OF_BAND, w, h);
-        tag(ctx, `${rows[tdcRow].hip.toFixed(0)}\u00b0`, j.hip, hipOk ? IN_BAND : OUT_OF_BAND, w, h);
-      }, side);
-      if (tdcShot.fail) stillsFail ??= tdcShot.fail;
-      else keyframes.push({
-        ...tdcShot, label: "Top of the stroke",
-        caption: tdcShot.drawn
-          ? `Hip fold ${rows[tdcRow].hip.toFixed(0)}\u00b0 on this stroke — the average is ${hipTDC.toFixed(0)}\u00b0.`
-          : "We couldn't see shoulder, hip and knee clearly enough in this frame to draw on it.",
-      });
+        limb(ctx, [j.sho, j.hip, j.knee], hipColour, w, h);
+        tag(ctx, `${rows[tdcRow].hip.toFixed(0)}\u00b0`, j.hip, hipColour, w, h);
+        return [j.sho, j.hip, j.knee];
+      },
+    });
+  }
+
+  if (foreaft?.at != null) {
+    specs.push({
+      key: "foreaft", row: foreaft.at,
+      caption: "Cranks level. The dashed line drops straight down from your knee; the dot is where the pedal axle sits under the ball of your foot.",
+      draw: (ctx, j, w, h) => {
+        if (!SEEN(j.knee) || !SEEN(j.heel) || !SEEN(j.toe)) return false;
+        const axle = {
+          x: j.toe.x + AXLE_ALONG_FOOT * (j.heel.x - j.toe.x),
+          y: j.toe.y + AXLE_ALONG_FOOT * (j.heel.y - j.toe.y),
+        };
+        plumb(ctx, { x: j.knee.x, y: j.knee.y }, { x: j.knee.x, y: axle.y }, "#9C9A93", w, h);
+        dot(ctx, j.knee, OUT_OF_BAND, w, h);
+        dot(ctx, axle, OUT_OF_BAND, w, h);
+        limb(ctx, [{ x: j.knee.x, y: axle.y }, axle], OUT_OF_BAND, w, h);
+        return [j.knee, axle, j.heel, j.toe];
+      },
+    });
+  }
+
+  let stillsFail = null;
+  const shots = new Map();
+  try {
+    // One rewind, then forward through the frames in time order.
+    if (!(await seekTo(video, 0, 6000))) stillsFail = "the clip would not rewind";
+    else {
+      const order = [...specs].sort((a, b) => rows[a.row].t - rows[b.row].t);
+      for (let n = 0; n < order.length; n++) {
+        const spec = order[n];
+        const shot = await still(video, lm, rows[spec.row].t, spec.draw, side);
+        if (shot.fail) stillsFail ??= shot.fail;
+        else shots.set(spec.key, { ...shot, caption: spec.caption });
+        onProgress(95 + (4 * (n + 1)) / order.length);
+      }
     }
   } catch (e) { stillsFail ??= e?.message || "the frame grab threw"; }
+
+  /* The report's big player still opens on the bottom of the stroke, so the
+     first thing on screen is the moment the headline is about. */
+  const keyframes = specs.map((sp) => shots.get(sp.key)).filter(Boolean);
 
   onProgress(100);
   release();
@@ -879,19 +1057,19 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       /* Same word as the headline: a report that says "you ride at the bottom
          edge" up top and "Close" down here is telling two stories about one
          joint. */
-      { name: "Knee at 6 o'clock", value: k + "°",
+      { name: "Knee at 6 o'clock", value: k + "°", shot: shots.get("knee"),
         verdict: pooled.settled && pooledVerdict === "borderline" ? "At edge" : word(pooledVerdict),
         note: `Band ${kLo}–${kHi}° while riding — this is the saddle-height check. You vary ±${kSd}° from stroke to stroke across ${kneeBDC.n} clearly-seen strokes${kneeBDC.n < kneeBDC.of ? ` of ${kneeBDC.of}` : ""}; averaged, that puts this ride's centre within ±${kU.toFixed(1)}°.${
           pooled.rides > 1 ? ` Pooled with your previous ${pooled.rides - 1} ride${pooled.rides > 2 ? "s" : ""}: ${pv}° ±${pooled.u.toFixed(1)}°.` : ""}` },
-      ...(toeBDC ? [{ name: "Foot at 6 o'clock", value: toeBDC.value.toFixed(0) + "° toe-down", verdict: word(toeVerdict),
+      ...(toeBDC ? [{ name: "Foot at 6 o'clock", shot: shots.get("foot"), value: toeBDC.value.toFixed(0) + "° toe-down", verdict: word(toeVerdict),
         note: `Band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}° toe-down at the bottom. ±${toeBDC.sd.toFixed(1)}° across your strokes.` }] : []),
-      ...(hipTDC ? [{ name: "Hip fold at the top", value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
+      ...(hipTDC ? [{ name: "Hip fold at the top", shot: shots.get("hip"), value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
         note: `Fitting window ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° depending on flexibility. ±${hipTDC.sd.toFixed(1)}° across your strokes.` }] : []),
       /* Reported as a position, never as a verdict: knee-over-axle is where
          fitters START, not where riders should end up, and the two assumptions
          under the centimetre figure are named rather than hidden. */
       ...(foreaft ? [{
-        name: "Knee over the pedal, 3 o'clock",
+        name: "Knee over the pedal, 3 o'clock", shot: shots.get("foreaft"),
         value: foreaft.cm != null
           ? `${foreaft.cm > 0 ? "+" : ""}${foreaft.cm.toFixed(1)} cm`
           : `${foreaft.ofFemur > 0 ? "+" : ""}${(foreaft.ofFemur * 100).toFixed(0)}% of thigh`,

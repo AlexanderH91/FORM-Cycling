@@ -426,6 +426,7 @@ export function drawReport(view, r, sideClip) {
         r.provisional ? "Provisional read" : "This ride's fix"}</div>
       <h2>${f.title}</h2><p>${f.line}</p>
       <p><strong>Try:</strong> ${f.cue}</p>
+      ${f.why ? `<p class="why"><strong>What that gets you:</strong> ${f.why}</p>` : ""}
       ${r.provisional ? `<p>The numbers below are shown without verdicts.</p>` : ""}
     </div>
     ${canPlay ? `
@@ -445,19 +446,20 @@ export function drawReport(view, r, sideClip) {
         </div>
         <figcaption>Knee angle, drawn on the joints the model found in each frame. Green in band, gold out.</figcaption>
       </div>` : ""}
-    <div class="sect">What we measured on</div>
-    ${r.keyframes?.length ? r.keyframes.map((k) => `
-        <figure class="keyframe glass">
-          <img src="${k.src}" alt="${k.label}">
-          <figcaption><span class="kf-label">${k.label}</span>${k.caption}</figcaption>
-        </figure>`).join("")
-      /* An empty section used to just vanish, which read as "the feature isn't
-         there" rather than "the grab failed". Name the reason. */
-      : `<div class="glass card"><p>No stills this time — ${r.stillsFail ?? "the frames could not be pulled back out of the clip"}. The measurements above are unaffected; they were read from the clip as it was sampled.</p></div>`}
+    ${/* Stills live inside the card that claims each number now. This only
+          speaks up when they could not be made at all. */""}
+    ${r.keyframes?.length ? "" : `<div class="glass card"><p><strong>No stills this time</strong> — ${
+      r.stillsFail ?? "the frames could not be pulled back out of the clip"}. The measurements below are unaffected; they were read from the clip as it was sampled.</p></div>`}
     <div class="sect">Measured</div>
     ${r.cards.map((c) => `
       <div class="glass card"><div class="row"><h3>${c.name}</h3>
         <div class="val">${c.value} ${c.verdict ? `<em>${c.verdict}</em>` : ""}</div></div>
+        ${/* The frame the number came from, inside the card that claims it. */""}
+        ${c.shot ? `<figure class="cardshot">
+            <img src="${c.shot.src}" alt="${c.name} measured on your ride" loading="lazy">
+            ${c.shot.drawn ? `<figcaption>${c.shot.caption}</figcaption>`
+              : `<figcaption>Your frame at that moment. The joints were not clear enough here to draw on, so nothing is drawn.</figcaption>`}
+          </figure>` : ""}
         <p>${c.note}</p></div>`).join("")}
     ${viewsBlock(r)}
     <a class="btn secondary coach-cta" href="#/coach?about=report">
@@ -537,8 +539,25 @@ function wirePlayer(view, r, clip) {
     live.style.color = colour;
   }
 
+  /* Drive the overlay off the frames the video actually presents where the
+     browser offers that, so the skeleton is redrawn for the frame on screen
+     rather than for whenever rAF happened to fire. timeupdate alone fires
+     about four times a second, which is nowhere near a pedal stroke. */
   let raf = null;
-  const loop = () => { draw(); if (!video.paused) { seek.value = String(((video.currentTime - t0) / Math.max(0.001, t1 - t0)) * 1000); raf = requestAnimationFrame(loop); } };
+  const useVFC = typeof video.requestVideoFrameCallback === "function";
+  const loop = () => {
+    draw();
+    if (video.paused) return;
+    seek.value = String(((video.currentTime - t0) / Math.max(0.001, t1 - t0)) * 1000);
+    raf = useVFC ? video.requestVideoFrameCallback(loop) : requestAnimationFrame(loop);
+  };
+  // One canceller: a video-frame callback handle is not an animation-frame one,
+  // and cancelling the wrong kind leaves the loop running after teardown.
+  const stop = () => {
+    if (raf == null) return;
+    if (useVFC) video.cancelVideoFrameCallback?.(raf); else cancelAnimationFrame(raf);
+    raf = null;
+  };
 
   video.onloadedmetadata = async () => {
     /* A muted inline video that has never played shows black on iOS, however
@@ -557,10 +576,10 @@ function wirePlayer(view, r, clip) {
   video.ontimeupdate = draw;
   playBtn.onclick = () => {
     if (video.paused) { if (video.currentTime >= t1 - 0.05) video.currentTime = t0; video.play(); playBtn.textContent = "❚❚"; loop(); }
-    else { video.pause(); playBtn.textContent = "▶"; cancelAnimationFrame(raf); }
+    else { video.pause(); playBtn.textContent = "▶"; stop(); }
   };
   video.onplay = () => { playBtn.textContent = "❚❚"; loop(); };
-  video.onpause = () => { playBtn.textContent = "▶"; cancelAnimationFrame(raf); };
+  video.onpause = () => { playBtn.textContent = "▶"; stop(); };
   // Loop the trimmed section, not the whole clip.
   const fence = () => { if (video.currentTime > t1) video.currentTime = t0; };
   video.addEventListener("timeupdate", fence);
@@ -573,5 +592,5 @@ function wirePlayer(view, r, clip) {
   }
   addEventListener("resize", draw);
 
-  return () => { cancelAnimationFrame(raf); video.pause(); video.removeAttribute("src"); URL.revokeObjectURL(url); };
+  return () => { stop(); video.pause(); video.removeAttribute("src"); URL.revokeObjectURL(url); };
 }

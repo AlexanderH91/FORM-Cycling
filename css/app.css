@@ -282,3 +282,11 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .vdot.done{background:#34D27B}
 .vdot.gated{background:#E0603A}
 .vdot.missing{background:rgba(255,255,255,.22);box-shadow:inset 0 0 0 1px var(--muted)}
+
+/* the frame a number came from, inside the card that claims it */
+.cardshot{margin:12px 0 4px}
+.cardshot img{display:block;width:100%;border-radius:12px;background:#000}
+.cardshot figcaption{font-size:12.5px;line-height:1.45;color:var(--muted);margin-top:7px}
+.why{color:var(--ink);background:rgba(242,194,48,.07);border-left:2px solid var(--gold);
+  padding:10px 12px;border-radius:0 10px 10px 0;margin-top:12px;font-size:14.5px;line-height:1.5}
+.why strong{color:var(--gold);font-weight:600}
