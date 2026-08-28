@@ -308,3 +308,51 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .caveats summary{cursor:pointer;font-size:13px;color:var(--gold);letter-spacing:.02em}
 .caveats ul{margin:8px 0 0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.5}
 .caveats li{margin-bottom:6px}
+
+/* bottom sheet */
+.sheetwrap{position:fixed;inset:0;z-index:80;display:flex;align-items:flex-end;justify-content:center}
+.sheetbg{position:absolute;inset:0;background:rgba(0,0,0,.6);opacity:0;transition:opacity .22s ease}
+.sheetwrap.open .sheetbg{opacity:1}
+.sheet{position:relative;width:min(480px,100%);max-height:88dvh;overflow-y:auto;
+  border-radius:22px 22px 0 0;background:rgba(18,18,18,.98);
+  padding:22px 20px calc(26px + env(safe-area-inset-bottom));
+  transform:translateY(100%);transition:transform .24s cubic-bezier(.2,.8,.2,1)}
+.sheetwrap.open .sheet{transform:translateY(0)}
+.sheetx{position:absolute;top:14px;right:14px;width:34px;height:34px;border-radius:50%;
+  border:1px solid var(--glassline);background:rgba(255,255,255,.04);color:var(--muted);
+  font-size:14px;cursor:pointer;line-height:1}
+.sheet h2{margin-right:40px}
+
+/* provider buttons */
+.providers{display:flex;flex-direction:column;gap:10px;margin-top:4px}
+.provider{display:flex;align-items:center;gap:13px;width:100%;text-align:left;cursor:pointer;
+  background:rgba(255,255,255,.04);border:1px solid var(--glassline);border-radius:16px;
+  padding:14px 15px;color:var(--ink);font-family:var(--body)}
+.provider:active{background:rgba(255,255,255,.07)}
+.provider .pmark{width:38px;height:38px;flex:none;border-radius:11px;display:grid;place-items:center;
+  font-family:var(--display);font-weight:700;font-size:19px;color:#0B0B0B}
+.provider .pname{font-weight:600;font-size:16px;line-height:1.2}
+.provider .pwhat{display:block;color:var(--muted);font-size:13px;line-height:1.4;margin-top:3px;font-weight:400}
+.provider .pchip{margin-left:auto;flex:none;font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;
+  text-transform:uppercase;padding:4px 8px;border-radius:999px;border:1px solid var(--glassline);color:var(--muted)}
+.provider .pchip.live{color:#34D27B;border-color:rgba(52,210,123,.4)}
+.provider .pchip.off{color:#E0603A;border-color:rgba(224,96,58,.35)}
+
+/* Numbered "what happens next" list. NOT .steps — that is already the capture
+   screen's row of progress dots, and reusing the name laid these out in three
+   columns across the sheet. */
+.howsteps{list-style:none;counter-reset:s;padding:0;margin:16px 0 0;display:block}
+.howsteps li{counter-increment:s;position:relative;display:block;padding-left:34px;
+  margin-bottom:14px;color:var(--muted);font-size:14.5px;line-height:1.5}
+.howsteps li::before{content:counter(s);position:absolute;left:0;top:2px;width:23px;height:23px;
+  border-radius:50%;background:rgba(242,194,48,.14);color:var(--gold);
+  font-family:var(--mono);font-size:11.5px;display:grid;place-items:center}
+.howsteps li b{color:var(--ink);font-weight:600}
+
+/* the status pill, usable outside a provider row too */
+.pchip{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;
+  padding:4px 9px;border-radius:999px;border:1px solid var(--glassline);color:var(--muted)}
+.pchip.live{color:#34D27B;border-color:rgba(52,210,123,.4)}
+.pchip.off{color:#E0603A;border-color:rgba(224,96,58,.35)}
+.sheetnote{font-size:13px;color:var(--muted);line-height:1.5;
+  border-left:2px solid var(--glassline);padding-left:12px;margin:16px 0 0}

@@ -1,5 +1,5 @@
 import { supa } from "../supa.js";
-import { appbar } from "../ui.js";
+import { appbar, sheet } from "../ui.js";
 import { BUILD, VERSION, GARMIN_STATUS } from "../config.js";
 import { linkStatus, returnMessage, startStrava, syncStrava, disconnectStrava, importFile } from "./connect.js";
 
@@ -27,22 +27,109 @@ export async function renderProfile(view, user) {
   </div>
   <div class="glass card">
     <h3>Your rides</h3>
-    <p>Connect a training platform and FORM can show what your riding did after
-    each change you make to the bike. Summary figures only — never your routes.</p>
+    <p>FORM measures how you sit on the bike. Your head unit knows how you
+    actually rode. Connect one and every change you make gets a before and an
+    after.</p>
     <div class="ok" id="linkmsg"></div>
     <div class="err" id="linkerr"></div>
+    <div class="providers" id="providers"></div>
     <div id="links"></div>
-    <label style="margin-top:14px">Garmin</label>
-    <p class="dim" style="font-size:13.5px">${GARMIN_STATUS.reason} Two things that
-    do work today: almost every Garmin auto-syncs to Strava, or export a
-    <strong>.TCX</strong> from Garmin Connect and import it here.</p>
-    <button class="btn secondary" id="importbtn">Import a .TCX file</button>
     <input type="file" accept=".tcx,.xml,application/xml,text/xml" class="hidden" id="tcx">
   </div>
   <button class="btn secondary" id="signout">Sign out</button>
   <div class="footnote">${VERSION} · build ${BUILD}<br>Videos are analyzed on your phone and never uploaded. Only measurement results are stored in your account.</div>`;
 
   /* ---- training platform links ---- */
+  const PROVIDERS = {
+    strava: {
+      name: "Strava", initial: "S", colour: "#FC4C02",
+      what: "Rides pull in automatically after each one",
+    },
+    garmin: {
+      name: "Garmin", initial: "G", colour: "#4B9CD3",
+      what: "Import a file, or let Garmin sync to Strava",
+    },
+  };
+
+  function providerButton(key, chip, chipClass = "") {
+    const p = PROVIDERS[key];
+    return `<button class="provider" data-p="${key}">
+      <span class="pmark" style="background:${p.colour}">${p.initial}</span>
+      <span><span class="pname">${p.name}</span><span class="pwhat">${p.what}</span></span>
+      <span class="pchip ${chipClass}">${chip}</span>
+    </button>`;
+  }
+
+  /* Pressing a provider explains what is about to happen before it happens.
+     The rider is being sent to another company's site; being told what comes
+     back — and what FORM keeps — is the least they are owed. */
+  function stravaSheet(live) {
+    const s = sheet(`
+      <h2>Connect Strava</h2>
+      ${live ? "" : `<p class="pchip off" style="display:inline-block;margin:0 0 10px">Preview · not switched on yet</p>`}
+      <p>Every ride you upload to Strava arrives here on its own, so a saddle
+      change stops being a guess and starts having a before and an after.</p>
+      <ol class="howsteps">
+        <li><b>Strava asks your permission.</b> You will land on Strava's own
+        page — FORM never sees your Strava password.</li>
+        <li><b>You come straight back.</b> Your recent rides are pulled in
+        within a few seconds.</li>
+        <li><b>Journey fills in.</b> Each change you log gets the rides either
+        side of it, with the count on each side shown.</li>
+      </ol>
+      <p class="sheetnote"><strong>What FORM keeps:</strong> date, duration,
+      power, heart rate and cadence. <strong>What it never asks for:</strong>
+      your routes or GPS. It cannot post to Strava, and disconnecting deletes
+      every ride it brought in.</p>
+      <button class="btn" id="sheetgo" style="margin-top:18px">${
+        live ? "Continue to Strava" : "Continue to Strava"}</button>
+      ${live ? "" : `<p class="dim" style="font-size:12.5px;margin-top:10px">
+        This will work as soon as the Strava keys are set on the server. Until
+        then this button shows you the shape of it.</p>`}`);
+
+    s.el.querySelector("#sheetgo").onclick = async (e) => {
+      e.target.disabled = true;
+      e.target.textContent = "Opening Strava…";
+      try {
+        const res = await startStrava();
+        if (res.ok) return;                        // the browser is leaving
+        e.target.disabled = false;
+        e.target.textContent = "Continue to Strava";
+        say(linkmsg, "");
+        say(linkerr, res.message);
+        s.close();
+      } catch (err) {
+        e.target.disabled = false;
+        e.target.textContent = "Continue to Strava";
+        say(linkerr, err.message);
+        s.close();
+      }
+    };
+  }
+
+  function garminSheet() {
+    const s = sheet(`
+      <h2>Garmin</h2>
+      <p class="pchip off" style="display:inline-block;margin:0 0 10px">Not connectable</p>
+      <p>${GARMIN_STATUS.reason} FORM would rather say that than give you a
+      button that can only fail.</p>
+      <p style="color:var(--ink)"><strong>Two things that do work today:</strong></p>
+      <ol class="howsteps">
+        <li><b>Let Garmin feed Strava.</b> Nearly every Garmin already syncs
+        there automatically — connect Strava and your Garmin rides arrive with
+        everything else.</li>
+        <li><b>Import a file.</b> Export a <b>.TCX</b> from Garmin Connect and
+        open it here. It is read on your phone; nothing is uploaded.</li>
+      </ol>
+      <p class="sheetnote">The moment Garmin reopens its developer programme,
+      this becomes a direct connection — the app is already built for it.</p>
+      <button class="btn" id="sheetstrava" style="margin-top:18px">Connect Strava instead</button>
+      <button class="btn secondary" id="sheetfile" style="margin-top:10px">Import a .TCX file</button>`);
+
+    s.el.querySelector("#sheetstrava").onclick = () => { s.close(); stravaSheet(false); };
+    s.el.querySelector("#sheetfile").onclick = () => { s.close(); view.querySelector("#tcx").click(); };
+  }
+
   const linkmsg = view.querySelector("#linkmsg"), linkerr = view.querySelector("#linkerr");
   const say = (el, text) => { el.textContent = text; };
 
@@ -51,6 +138,14 @@ export async function renderProfile(view, user) {
     try { s = await linkStatus(); }
     catch (e) { say(linkerr, "Could not read your connections: " + e.message); return; }
     const strava = s.links.find((l) => l.provider === "strava");
+
+    view.querySelector("#providers").innerHTML =
+      providerButton("strava", strava ? "Connected" : "Connect", strava ? "live" : "") +
+      providerButton("garmin", "How to", "");
+    for (const btn of view.querySelectorAll(".provider")) {
+      btn.onclick = () => (btn.dataset.p === "garmin" ? garminSheet() : strava ? null : stravaSheet(false));
+    }
+
     view.querySelector("#links").innerHTML = strava
       ? `<div class="linkrow"><div><b>Strava</b><br><span class="dim">${
           s.rides} ride${s.rides === 1 ? "" : "s"} on file${
@@ -58,14 +153,9 @@ export async function renderProfile(view, user) {
           strava.last_error ? ` · last attempt: ${strava.last_error}` : ""}</span></div></div>
          <button class="btn secondary" id="sync">Check for new rides</button>
          <button class="btn ghostbtn" id="unlink">Disconnect Strava</button>`
-      : `<button class="btn" id="link">Connect Strava</button>`;
+      : "";
 
     const on = (id, fn) => { const el = view.querySelector("#" + id); if (el) el.onclick = fn; };
-    on("link", async (e) => {
-      e.target.disabled = true; say(linkerr, ""); say(linkmsg, "Opening Strava…");
-      try { await startStrava(); }
-      catch (err) { e.target.disabled = false; say(linkmsg, ""); say(linkerr, err.message); }
-    });
     on("sync", async (e) => {
       e.target.disabled = true; say(linkerr, ""); say(linkmsg, "Asking Strava for new rides…");
       try {
@@ -92,7 +182,6 @@ export async function renderProfile(view, user) {
   }
   paintLinks();
 
-  view.querySelector("#importbtn").onclick = () => view.querySelector("#tcx").click();
   view.querySelector("#tcx").onchange = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;

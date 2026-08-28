@@ -14,3 +14,30 @@ export function appbar(meta = "") {
     ${meta ? `<div class="meta">${meta}</div>` : ""}
   </div>`;
 }
+
+/* A bottom sheet. Used where a choice needs explaining before it is made —
+   connecting an outside account is the first of those, because the rider is
+   about to be sent to another company's site and deserves to know what comes
+   back. Closes on the backdrop, on Escape, and on its own close button. */
+export function sheet(html) {
+  const wrap = document.createElement("div");
+  wrap.className = "sheetwrap";
+  wrap.innerHTML = `<div class="sheetbg"></div>
+    <div class="sheet glass" role="dialog" aria-modal="true">
+      <button class="sheetx" aria-label="Close">✕</button>
+      ${html}
+    </div>`;
+  document.body.appendChild(wrap);
+  requestAnimationFrame(() => wrap.classList.add("open"));
+
+  const close = () => {
+    wrap.classList.remove("open");
+    removeEventListener("keydown", onKey);
+    setTimeout(() => wrap.remove(), 220);
+  };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
+  addEventListener("keydown", onKey);
+  wrap.querySelector(".sheetbg").onclick = close;
+  wrap.querySelector(".sheetx").onclick = close;
+  return { el: wrap.querySelector(".sheet"), close };
+}

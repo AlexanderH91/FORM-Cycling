@@ -28,18 +28,40 @@ export async function linkStatus() {
 
 async function call(url) {
   const { data: { session } } = await supa.auth.getSession();
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${session?.access_token ?? ""}`, "Content-Type": "application/json" },
-  });
+  let res;
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${session?.access_token ?? ""}`, "Content-Type": "application/json" },
+    });
+  } catch {
+    // fetch() rejects with "Failed to fetch" for anything network-shaped, which
+    // is true and useless. Say what the rider can act on.
+    const e = new Error("Couldn't reach the FORM server. Check your connection and try again.");
+    e.offline = true;
+    throw e;
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.message || body.error || `request failed (${res.status})`);
   return body;
 }
 
+/* Returns rather than throws when the server has no Strava credentials yet.
+   That is a setup state, not a failure, and the difference matters: one shows
+   the rider what connecting will be like, the other shows them a red error
+   for something they did nothing wrong to cause. */
 export async function startStrava() {
-  const { url } = await call(STRAVA_START);
-  location.href = url;                       // hands off to Strava's own screen
+  try {
+    const { url } = await call(STRAVA_START);
+    location.href = url;                     // hands off to Strava's own screen
+    return { ok: true };
+  } catch (e) {
+    if (/not set up|not_configured/i.test(e.message))
+      return { ok: false, reason: "not_configured",
+               message: "Strava is not switched on for this server yet — the keys have not been set." };
+    if (e.offline) return { ok: false, reason: "offline", message: e.message };
+    throw e;
+  }
 }
 
 export const syncStrava = () => call(STRAVA_SYNC);
