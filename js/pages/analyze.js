@@ -382,7 +382,7 @@ function addExtraViewCards(r) {
     const t = f.kneeTravel;
     const both = t.left != null && t.right != null;
     r.cards.push({
-      name: "Knee travel (front)",
+      name: "Knee travel (front)", shot: f.stills?.knees,
       means: "A knee that swings in or out is spending part of every stroke sideways instead of down, and it is the pattern most often sitting behind an ache on the inside or outside of the joint. Cleat position, saddle height and foot support all move it — which is why it is worth knowing before you change any of them.",
       value: both ? `${t.left}° L · ${t.right}° R` : `${t.left ?? t.right}° ${f.oneLegOnly === "left" ? "L" : "R"}`,
       note: (both
@@ -410,13 +410,13 @@ function addExtraViewCards(r) {
       means: "From behind, FORM can see whether you sit level or rock to chase the pedals — the check that confirms or contradicts the saddle-height reading from the side." });
   } else if (b) {
     if (b.pelvicRock != null) r.cards.push({
-      name: "Pelvic rock (behind)",
+      name: "Pelvic rock (behind)", shot: b.stills?.body,
       means: "Hips rocking side to side usually means you are reaching for the bottom of the stroke — the classic sign of a saddle a touch too high. Every degree of rock is movement going sideways instead of into the pedals, and it is what starts rubbing after two hours.",
       value: `${b.pelvicRock}°`,
       note: "How much your hips tilt side to side over the stroke. Reported without a verdict — FORM has no cited band for it yet.",
     });
     if (b.shoulderRock != null) r.cards.push({
-      name: "Shoulder rock (behind)",
+      name: "Shoulder rock (behind)", shot: b.stills?.body,
       means: "Shoulders usually follow the hips. On its own this can simply be how you ride; sitting next to pelvic rock, it is the same story told twice, and it is the hips that need fixing.",
       value: `${b.shoulderRock}°`,
       note: "Side-to-side tilt across the shoulders over the stroke.",
@@ -439,21 +439,11 @@ export function drawReport(view, r, clips) {
       <p>${r.gate}</p></div>
     <a class="btn" href="#/analyze">Re-record</a>`
   : `
-    <div class="glass card" style="border-left:3px solid ${r.provisional ? "#E0603A" : "var(--gold)"}">
-      <div class="sect" style="margin:0 0 6px${r.provisional ? ";color:#E0603A" : ""}">${
-        r.provisional ? "Provisional read" : "This ride's fix"}</div>
-      <h2>${f.title}</h2><p>${f.line}</p>
-      <p><strong>Try:</strong> ${f.cue}</p>
-      ${f.why ? `<p class="why"><strong>What that gets you:</strong> ${f.why}</p>` : ""}
-      ${/* Without a date for the change there is no before and no after, and
-            the Journey screen is just a fitness chart. FORM never assumes its
-            advice was taken — the rider says so. */""}
-      <button class="btn secondary" id="madeit">I made this change</button>
-      <div class="ok" id="madeitmsg"></div>
-      ${r.provisional ? `<p>The numbers below are shown without verdicts.</p>` : ""}
-    </div>
+    ${/* Your ride first, then the verdict on it. A rider opening a report
+          should see themselves before they see a judgement — and the angle
+          tabs are also the fastest explanation of what FORM looked at. */""}
     ${canPlay ? `
-      <div class="sect">Your ride, measured</div>
+      <div class="sect">Your ride</div>
       <div class="glass player">
         ${/* One player, three angles. Switching tabs is how a rider sees what
               each camera position is actually for. */""}
@@ -477,6 +467,19 @@ export function drawReport(view, r, clips) {
         </div>
         <figcaption id="mvcap"></figcaption>
       </div>` : ""}
+    <div class="glass card" style="border-left:3px solid ${r.provisional ? "#E0603A" : "var(--gold)"}">
+      <div class="sect" style="margin:0 0 6px${r.provisional ? ";color:#E0603A" : ""}">${
+        r.provisional ? "Provisional read" : "This ride's fix"}</div>
+      <h2>${f.title}</h2><p>${f.line}</p>
+      <p><strong>Try:</strong> ${f.cue}</p>
+      ${f.why ? `<p class="why"><strong>What that gets you:</strong> ${f.why}</p>` : ""}
+      ${/* Without a date for the change there is no before and no after, and
+            the Journey screen is just a fitness chart. FORM never assumes its
+            advice was taken — the rider says so. */""}
+      <button class="btn secondary" id="madeit">I made this change</button>
+      <div class="ok" id="madeitmsg"></div>
+      ${r.provisional ? `<p>The numbers below are shown without verdicts.</p>` : ""}
+    </div>
     ${/* Stills live inside the card that claims each number now. This only
           speaks up when they could not be made at all. */""}
     ${r.keyframes?.length ? "" : `<div class="glass card"><p><strong>No stills this time</strong> — ${

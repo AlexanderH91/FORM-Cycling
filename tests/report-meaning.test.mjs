@@ -165,6 +165,34 @@ const leak = await page.evaluate(async () => {
 T('the player is torn down when you leave the report', leak.kept && leak.called,
   'its teardown was being returned and dropped');
 
+// The rider sees their own ride before they see a judgement on it.
+const order = await page.evaluate(() => {
+  const sects = [...document.querySelectorAll('.sect')].map((el) => el.textContent.trim());
+  const player = document.querySelector('.player')?.getBoundingClientRect().top;
+  const fix = [...document.querySelectorAll('.card h2')][0]?.getBoundingClientRect().top;
+  return { sects, playerFirst: player != null && fix != null && player < fix, player, fix };
+});
+T('the ride plays above the verdict on it', order.playerFirst,
+  `player at ${Math.round(order.player)}, fix at ${Math.round(order.fix)}`);
+T('and it is labelled as your ride', order.sects[0] === 'Your ride', order.sects.slice(0, 3).join(' · '));
+
 T('no page errors through any of it', errs.length === 0, errs.join(' | ') || 'clean');
 await b.close();
-finish();
+
+/* Front and rear stills: pulled from their own clips, inside their own cards.
+   Checked at the source, because producing them needs a real pose read that
+   this environment cannot fake. */
+{
+  const src = await (await fetch(`${BASE}/js/analysis.js`)).text();
+  const pageSrc = await (await fetch(`${BASE}/js/pages/analyze.js`)).text();
+  T('the front view pulls its own still', /const frontStill = async/.test(src) && /knees: \{ \.\.\.shot/.test(src));
+  T('the rear view pulls its own still', /const rearStill = async/.test(src) && /body: \{ \.\.\.shot/.test(src));
+  T('both are grabbed before the clip is released',
+    /if \(after && rows\.length\)/.test(src) && /rows\.stills = await after/.test(src),
+    'sampleFrames runs the hook before release()');
+  T('and they reach the cards that claim those numbers',
+    /shot: f\.stills\?\.knees/.test(pageSrc) && /shot: b\.stills\?\.body/.test(pageSrc));
+  T('a front or rear still that cannot be made is simply absent, not blank',
+    /return shot\.fail \? null :/.test(src), 'fail -> null, so no empty figure renders');
+  finish();
+}

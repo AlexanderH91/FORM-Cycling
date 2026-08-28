@@ -338,7 +338,10 @@ async function still(video, lm, t, draw, side, maxW = 720) {
   const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
   /* The draw callback returns the points it drew, or false when the joints it
      needs are not visible in this exact frame. */
-  const focus = p ? draw(ctx, pickSide(p, side), c.width, c.height) : false;
+  /* side === null hands the draw callback the raw landmark array. The side
+     view wants one leg picked for it; the front and rear views need both
+     sides at once, so they take the landmarks as they come. */
+  const focus = p ? draw(ctx, side ? pickSide(p, side) : p, c.width, c.height) : false;
   const drawn = focus !== false;
   return { src: crop(c, drawn ? focus : null), drawn };
 }
@@ -481,7 +484,10 @@ function seekTo(video, t, budgetMs = 2500) {
   });
 }
 
-async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read) {
+/* `after` runs once the clip has been sampled and BEFORE the video is
+   released — the only moment the front and rear views can pull a still, since
+   everything they know about the clip dies with that element. */
+async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read, after) {
   const lm = await getLandmarker();
   const video = offscreenVideo();
   const srcUrl = URL.createObjectURL(blob);
@@ -515,6 +521,13 @@ async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read) {
       onProgress?.(i / total);
     }
     rows.stat = stat;
+    if (after && rows.length) {
+      // Sampling ends at the far end of the clip, so wind back before asking
+      // for a frame from the middle of it.
+      try {
+        if (await seekTo(video, 0, 6000)) rows.stills = await after(video, lm, rows);
+      } catch { /* a view without a still still reports its numbers */ }
+    }
     return rows;
   } finally { release(); }
 }
@@ -577,6 +590,30 @@ export function overlayAt(track, t, tol = 0.12) {
    Measured per leg as the ankle→knee line's lean from vertical, so it is
    independent of how far away the phone was. */
 export async function analyzeFrontClip(blob, trim, onProgress) {
+  /* The frame worth showing from the front is the one where a knee is furthest
+     from vertical — the moment the number is describing. Captioned as the
+     extreme it is, not as a typical stroke. */
+  const frontStill = async (video, lm, rows) => {
+    const lean = (r) => Math.max(Math.abs(r.left ?? 0), Math.abs(r.right ?? 0));
+    const worst = rows.reduce((b, r, i) => (lean(r) > lean(rows[b]) ? i : b), 0);
+    const shot = await still(video, lm, rows[worst].t, (ctx, p, w, h) => {
+      const seen = (i) => SEEN(p[i]);
+      const pairs = [[25, 27], [26, 28]].filter(([k, a]) => seen(k) && seen(a));
+      if (!pairs.length) return false;
+      for (const [k, a] of pairs) {
+        plumb(ctx, { x: p[a].x, y: p[a].y }, { x: p[a].x, y: p[k].y }, "#9C9A93", w, h);
+        limb(ctx, [p[k], p[a]], OUT_OF_BAND, w, h);
+      }
+      const [k] = pairs[0];
+      tag(ctx, `${lean(rows[worst]).toFixed(0)}\u00b0`, p[k], OUT_OF_BAND, w, h);
+      return pairs.flatMap(([kk, aa]) => [p[kk], p[aa]]);
+    }, null);
+    return shot.fail ? null : {
+      knees: { ...shot,
+        caption: `The most your knee left vertical in this clip — ${lean(rows[worst]).toFixed(0)}\u00b0. The dashed lines run straight up from each ankle.` },
+    };
+  };
+
   const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq, t) => {
     /* Each leg stands on its own. Requiring both at once threw the whole frame
        away whenever the far ankle passed behind the cranks — which is most of
@@ -595,7 +632,7 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
     row.t = t;
     row.j = { lknee: xy(p[25]), lankle: xy(p[27]), rknee: xy(p[26]), rankle: xy(p[28]) };
     return row;
-  });
+  }, frontStill);
 
   const MIN = 12 * 2;                          // two seconds of a usable leg
   const leftVals = rows.filter((r) => r.left != null).map((r) => r.left);
@@ -605,7 +642,7 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
   if (leftVals.length < MIN && rightVals.length < MIN)
     return { gate: "We couldn't hold either knee in view for long enough from the front. Frame both legs from the waist down, with the light in front of you, and film again.", seen };
 
-  const out = { seen, kneeTravel: {}, trim,
+  const out = { seen, kneeTravel: {}, trim, stills: rows.stills ?? null,
                 track: rows.filter((r) => r.j).map((r) => ({ t: r.t, j: r.j, left: r.left, right: r.right })) };
   if (leftVals.length >= MIN) out.kneeTravel.left = +amplitude(leftVals).toFixed(1);
   if (rightVals.length >= MIN) out.kneeTravel.right = +amplitude(rightVals).toFixed(1);
@@ -624,6 +661,27 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
    stroke. Rock corroborates a saddle that is too high; it does not outrank
    the side view, which is the view that measures saddle height. */
 export async function analyzeRearClip(blob, trim, onProgress) {
+  // From behind, the frame that matters is the most tilted one.
+  const rearStill = async (video, lm, rows) => {
+    const tilt = (r) => Math.abs(r.pelvis ?? r.shoulder ?? 0);
+    const worst = rows.reduce((b, r, i) => (tilt(r) > tilt(rows[b]) ? i : b), 0);
+    const shot = await still(video, lm, rows[worst].t, (ctx, p, w, h) => {
+      const pairs = [[11, 12], [23, 24]].filter(([a, b]) => SEEN(p[a]) && SEEN(p[b]));
+      if (!pairs.length) return false;
+      for (const [a, b] of pairs) {
+        const mid = (p[a].y + p[b].y) / 2;
+        plumb(ctx, { x: p[a].x, y: mid }, { x: p[b].x, y: mid }, "#9C9A93", w, h);
+        limb(ctx, [p[a], p[b]], OUT_OF_BAND, w, h);
+      }
+      tag(ctx, `${tilt(rows[worst]).toFixed(0)}\u00b0`, p[pairs.at(-1)[0]], OUT_OF_BAND, w, h);
+      return pairs.flatMap(([a, b]) => [p[a], p[b]]);
+    }, null);
+    return shot.fail ? null : {
+      body: { ...shot,
+        caption: `The most tilted frame in this clip — ${tilt(rows[worst]).toFixed(0)}\u00b0 off level. The dashed lines are level for comparison.` },
+    };
+  };
+
   const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq, t) => {
     // Shoulder line and hip line stand alone — a jersey hides hips far more
     // often than shoulders, and shoulder rock on its own is still a finding.
@@ -637,7 +695,7 @@ export async function analyzeRearClip(blob, trim, onProgress) {
     row.t = t;
     row.j = { lsho: xy(p[11]), rsho: xy(p[12]), lhip: xy(p[23]), rhip: xy(p[24]) };
     return row;
-  });
+  }, rearStill);
 
   const MIN = 12 * 2;
   const sh = rows.filter((r) => r.shoulder != null).map((r) => r.shoulder);
@@ -647,7 +705,7 @@ export async function analyzeRearClip(blob, trim, onProgress) {
   if (sh.length < MIN && pv.length < MIN)
     return { gate: "We couldn't hold your shoulders or hips in view for long enough from behind. Stand the phone behind the rear wheel with light from the side, and film again.", seen };
 
-  const out = { seen, trim,
+  const out = { seen, trim, stills: rows.stills ?? null,
                 track: rows.filter((r) => r.j).map((r) => ({ t: r.t, j: r.j, shoulder: r.shoulder, pelvis: r.pelvis })) };
   if (sh.length >= MIN) out.shoulderRock = +amplitude(sh).toFixed(1);
   if (pv.length >= MIN) out.pelvicRock = +amplitude(pv).toFixed(1);
