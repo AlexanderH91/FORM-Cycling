@@ -15,6 +15,10 @@ const htmlVer   = html.match(/data-version="([^"]+)"/)?.[1];
 const jsVer     = cfg.match(/VERSION = "([^"]+)"/)?.[1];
 T('the two build strings are kept in step', htmlBuild === jsBuild, `html=${htmlBuild} js=${jsBuild}`);
 T('so are the two version strings', htmlVer === jsVer, `html=${htmlVer} js=${jsVer}`);
+/* The build carries the version, so a deploy cannot move one without the
+   other — which is what happened repeatedly: a fresh build string behind a
+   pill still reading v2, so every update looked identical from the phone. */
+T('the build carries the version', jsBuild?.endsWith(jsVer), `build=${jsBuild} version=${jsVer}`);
 
 // The pill's own text is static markup, so it can drift from both of them.
 const tagText = html.match(/id="vertag"[^>]*>\s*([^<]+)/)?.[1].trim();

@@ -152,11 +152,19 @@ is running old JavaScript and the panel says so instead of letting it look like
 a broken feature. **Force refresh** clears every cache, drops the worker, and
 reloads on a URL the cache cannot answer.
 
-Bump on every deploy: `BUILD` in `js/config.js` and `data-build` /
-`<meta name="form-build">` in `index.html`. On a version bump also move
-`VERSION`, `data-version`, the pill's own text, and `CACHE` in `sw.js` —
-renaming that cache is what purges what the previous version stored.
-`tests/version.test.mjs` fails if any of them drift apart.
+Bump before every deploy with:
+
+```
+node tools/bump.mjs        # v3 -> v4
+node tools/bump.mjs v9     # or set it outright
+```
+
+That moves all five copies at once — `VERSION` and `BUILD` in `js/config.js`,
+the meta tag, `data-build` / `data-version`, the pill's own text and the module
+query string in `index.html`, and `CACHE` in `sw.js` (renaming that cache is
+what purges what the previous version stored). It fails loudly if any file has
+drifted out of the shape it knows how to edit, rather than silently doing
+nothing. `tests/version.test.mjs` fails if the copies disagree.
 
 ## Why a reading can be "too close to call"
 
