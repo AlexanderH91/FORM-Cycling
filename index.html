@@ -8,7 +8,7 @@
 <!-- Keep in step with BUILD in js/config.js. This copy travels with the page,
      the other travels inside a cached module; the badge shows both so a stale
      bundle is visible instead of looking like a broken feature. -->
-<meta name="form-build" content="v4 · 2026-08-28-v4">
+<meta name="form-build" content="v5 · 2026-08-28-v5">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="assets/icon-180.png">
@@ -33,7 +33,7 @@
 
     <a href="#/journey" data-r="journey">
       <svg class="nico" viewBox="0 0 24 24"><path d="M6 21V4"/><path d="M6 4.5h10.5L14 8.5l2.5 4H6"/></svg>
-      <span>Journey</span><i class="soon">Soon</i></a>
+      <span>Journey</span></a>
 
     <a href="#/profile" data-r="profile">
       <svg class="nico" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-3.6 3.6-5.5 7-5.5s6.2 1.9 7 5.5"/></svg>
@@ -43,9 +43,9 @@
 
   <!-- Written in the HTML, not by a script, so it still says something when the
        modules are stale, broken, or never load at all. -->
-  <div id="ver" class="ver" data-build="2026-08-28-v4" data-version="v4">
+  <div id="ver" class="ver" data-build="2026-08-28-v5" data-version="v5">
     <button id="vertag" class="vertag" type="button" aria-label="Build info">
-      v4<i id="verdot" class="verdot"></i>
+      v5<i id="verdot" class="verdot"></i>
     </button>
     <div id="verpanel" class="verpanel glass hidden">
       <div class="verrow"><span>page</span><b id="verhtml">—</b></div>
@@ -143,6 +143,6 @@
   }
 })();
 </script>
-<script type="module" src="js/main.js?v=2026-08-28-v4"></script>
+<script type="module" src="js/main.js?v=2026-08-28-v5"></script>
 </body>
 </html>

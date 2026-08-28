@@ -16,7 +16,8 @@ const nav = await page.evaluate(() => {
 });
 T('nav is home/coach/analyze/journey/profile', nav.items.join(',') === 'home,coach,analyze,journey,profile', nav.items.join(','));
 T('drills is gone from the nav', !nav.items.includes('drills'), nav.items.join(','));
-T('journey is the only SOON badge', nav.soon.join(',') === 'journey', `soon on: ${nav.soon.join(',')}`);
+// Journey went from a placeholder to the screen that pairs rides with changes.
+T('no nav item is still a placeholder', nav.soon.length === 0, `soon on: ${nav.soon.join(',') || 'nothing'}`);
 T('nav coach opens on progression', nav.coachHref === '#/coach?about=progress', nav.coachHref);
 
 // The report keeps its own entry, because "this ride" is a subject the nav

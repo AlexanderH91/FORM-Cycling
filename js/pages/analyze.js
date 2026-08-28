@@ -427,6 +427,11 @@ export function drawReport(view, r, sideClip) {
       <h2>${f.title}</h2><p>${f.line}</p>
       <p><strong>Try:</strong> ${f.cue}</p>
       ${f.why ? `<p class="why"><strong>What that gets you:</strong> ${f.why}</p>` : ""}
+      ${/* Without a date for the change there is no before and no after, and
+            the Journey screen is just a fitness chart. FORM never assumes its
+            advice was taken — the rider says so. */""}
+      <button class="btn secondary" id="madeit">I made this change</button>
+      <div class="ok" id="madeitmsg"></div>
       ${r.provisional ? `<p>The numbers below are shown without verdicts.</p>` : ""}
     </div>
     ${canPlay ? `
@@ -467,6 +472,22 @@ export function drawReport(view, r, sideClip) {
     <a class="btn" href="#/home">Done</a>`}
   <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes${
     r.capture?.offSquareDeg != null ? ` · camera about ${r.capture.offSquareDeg}° off square` : ""} · build ${BUILD} · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}</div>`;
+  const made = view.querySelector("#madeit");
+  if (made) made.onclick = async () => {
+    made.disabled = true;
+    const msg = view.querySelector("#madeitmsg");
+    const { data: { user } } = await supa.auth.getUser();
+    const { error } = await supa.from("fit_changes").insert({
+      user_id: user?.id,
+      part: r.fix?.title ?? "Bike change",
+      note: r.fix?.cue ?? null,
+      changed_at: new Date().toISOString(),
+    });
+    if (error) { msg.textContent = "Could not save that: " + error.message; made.disabled = false; return; }
+    msg.innerHTML = `Logged for today. Your rides from here on are the "after" — see it on <a href="#/journey">Journey</a>.`;
+    made.textContent = "Change logged";
+  };
+
   if (canPlay) wirePlayer(view, r, sideClip);
 }
 

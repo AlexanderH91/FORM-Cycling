@@ -206,3 +206,67 @@ The fore/aft figure rests on two declared assumptions: `FEMUR_OVER_HEIGHT`
 (where the pedal axle sits along a foot the model can see but a pedal it
 cannot). Both are in `js/config.js`, and the card reports a position with no
 verdict word, because a reference position is not a target.
+
+## Connecting a rider's training data
+
+FORM measures your position. Strava knows how you rode. Pairing them is what
+turns "your saddle is 3 mm high" into "and here is what happened after you
+moved it".
+
+### Strava
+
+Self-serve. Create an app at <https://www.strava.com/settings/api>, set the
+**Authorization Callback Domain** to your Supabase project host
+(`nrmpntocdashxlzdqmcp.supabase.co`), then set the secrets:
+
+```
+supabase secrets set \
+  STRAVA_CLIENT_ID=... \
+  STRAVA_CLIENT_SECRET=... \
+  LINK_STATE_SECRET="$(openssl rand -hex 32)" \
+  APP_URL=https://alexanderh91.github.io/FORM-Cycling/
+```
+
+Three Edge Functions handle it. `strava-start` signs a state parameter and
+returns the approval URL; `strava-callback` runs without a JWT (the browser
+arrives from strava.com) and trusts nothing but that signature; `strava-sync`
+refreshes the token and pulls activities since the newest ride already stored.
+
+Tokens live in `rider_link_secrets`, which has RLS enabled and **no policies at
+all** — no signed-in client can read it, only the functions via the service
+role. `rider_links` holds the status a client is allowed to see.
+
+Two rules the code enforces rather than documents:
+
+- **Summary figures only.** No GPS streams, no polylines, no routes. FORM
+  stores how you rode, not where you live.
+- **Nothing from Strava reaches the voice coach.** Their API agreement
+  prohibits putting API data into AI models, so `stripPlatformData()` removes
+  ride fields from the coach payload before it is sent, and a test asserts
+  nothing platform-shaped survives.
+
+### Garmin
+
+Garmin's Connect Developer Program has **paused new applications** with no
+announced reopening date, so no new app can obtain credentials. Shipping a
+"Connect Garmin" button would ship a button that can only fail. Garmin riders
+have two routes that work today, both offered on the Me screen:
+
+1. Nearly every Garmin auto-syncs to Strava — connect that instead.
+2. Export a `.TCX` from Garmin Connect and import it. Parsed in the browser
+   with `DOMParser`, no upload, same summary fields as a Strava ride.
+
+The `provider` column already carries `garmin`, so the integration drops in if
+the programme reopens.
+
+### What the comparison will and will not say
+
+`js/rides.js` narrows to like-for-like rides — same indoor/outdoor, at least
+20 minutes, real power meters only — then reports the before and after medians
+with the count on each side. A difference is only called *clear* when it
+exceeds the spread of the rides themselves plus a per-metric floor, the same
+rule the fit report uses for a band edge.
+
+It never says a change caused anything. Every comparison ships with its
+confounds visible, ending with the reminder that sleep, heat, fatigue and
+motivation are invisible here.

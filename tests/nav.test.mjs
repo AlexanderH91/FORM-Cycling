@@ -36,7 +36,8 @@ const m = await page.evaluate(() => {
 T('nav spans the full width', m.fullWidth, 'spans viewport');
 T('nav sits on the bottom edge', Math.abs(m.navBottom - m.vp) < 1, `bottom=${m.navBottom} vp=${m.vp}`);
 T('centre disc is a 60px circle', m.disc.w === 60 && m.disc.h === 60, `${m.disc.w}x${m.disc.h}`);
-T('one SOON badge — Journey, the only thing still locked', m.soon === 1, `count=${m.soon}`);
+// Journey now shows real rides against real changes, so nothing is "soon".
+T('nothing in the nav is a promise any more', m.soon === 0, `SOON badges=${m.soon}`);
 T('five nav items', m.items.length === 5, m.items.map(i => i.r + ':' + i.label).join(' '));
 T('--nav-h tracks the new nav', m.navVar === Math.round(m.navH) + 'px' || parseFloat(m.navVar) > 0, `--nav-h=${m.navVar} navH=${m.navH.toFixed(1)}`);
 T('view reserves past the nav', m.pad > m.navH, `pad=${m.pad} navH=${m.navH.toFixed(1)}`);

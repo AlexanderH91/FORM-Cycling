@@ -290,3 +290,21 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .why{color:var(--ink);background:rgba(242,194,48,.07);border-left:2px solid var(--gold);
   padding:10px 12px;border-radius:0 10px 10px 0;margin-top:12px;font-size:14.5px;line-height:1.5}
 .why strong{color:var(--gold);font-weight:600}
+
+/* connections and journey */
+.linkrow{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 0}
+.linkrow b{font-size:15px}
+.dim{color:var(--muted)}
+.ghostbtn{background:transparent;border:1px solid var(--glassline);color:var(--muted)}
+.jrow{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-top:12px;font-size:14.5px}
+.jrow span{color:var(--muted)}
+.jrow b{font-family:var(--mono);font-size:13.5px;color:var(--ink);text-align:right}
+.jrow b em{display:block;font-style:normal;font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin-top:3px}
+.jrow b.up em{color:#34D27B}
+.jrow b.down em{color:#E0603A}
+.jrow b.flat em,.jrow b.dim{color:var(--muted)}
+.jsub{font-size:12px;color:var(--muted);line-height:1.45;margin-top:3px}
+.caveats{margin-top:14px}
+.caveats summary{cursor:pointer;font-size:13px;color:var(--gold);letter-spacing:.02em}
+.caveats ul{margin:8px 0 0;padding-left:18px;color:var(--muted);font-size:13px;line-height:1.5}
+.caveats li{margin-bottom:6px}

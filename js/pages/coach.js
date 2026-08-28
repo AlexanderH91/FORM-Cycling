@@ -47,6 +47,27 @@ function summarise(rows) {
   };
 }
 
+/* Strava's API agreement prohibits putting data obtained from their API into
+   an AI model. The coach is an AI model. So ride data — from Strava, or from
+   a file import that sits in the same table — never travels in the payload
+   that reaches it, and this strips it rather than trusting every future caller
+   to remember. The coach talks about your POSITION, which FORM measured
+   itself; your ride numbers stay on the Journey screen where no model sees
+   them. */
+const PLATFORM_KEYS = ["rides", "ride", "strava", "garmin", "avg_watts", "weighted_watts",
+  "avg_hr", "max_hr", "kilojoules", "distance_m", "moving_s", "elapsed_s", "device_watts"];
+
+export function stripPlatformData(value) {
+  if (Array.isArray(value)) return value.map(stripPlatformData);
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (PLATFORM_KEYS.includes(k)) continue;
+    out[k] = stripPlatformData(v);
+  }
+  return out;
+}
+
 export async function renderCoach(view) {
   const about = subjectFromHash();
 
@@ -156,7 +177,7 @@ export async function renderCoach(view) {
     const r = await fetch(COACH_TOKEN_ENDPOINT, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ report: subject }),
+      body: JSON.stringify({ report: stripPlatformData(subject) }),
     });
     const payload = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(payload.error || `coach-token returned ${r.status}`);

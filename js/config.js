@@ -4,8 +4,8 @@
    page, which revalidates far more aggressively. The version badge shows both,
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
-export const VERSION = "v4";
-export const BUILD = "2026-08-28-v4";
+export const VERSION = "v5";
+export const BUILD = "2026-08-28-v5";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -117,3 +117,23 @@ export const OTP_LENGTH = 8;
 // Function that holds it and returns a client secret good for about a minute.
 // Set it there once:  supabase secrets set OPENAI_API_KEY=sk-...
 export const COACH_TOKEN_ENDPOINT = `${SUPABASE_URL}/functions/v1/coach-token`;
+
+/* Connecting a training platform. The OAuth client secret lives only in Edge
+   Function secrets — never here, because this file is served to every visitor.
+   Set them once with:
+     supabase secrets set STRAVA_CLIENT_ID=... STRAVA_CLIENT_SECRET=... \
+                          LINK_STATE_SECRET=<long random string> \
+                          APP_URL=https://alexanderh91.github.io/FORM-Cycling/ */
+export const STRAVA_START = `${SUPABASE_URL}/functions/v1/strava-start`;
+export const STRAVA_SYNC = `${SUPABASE_URL}/functions/v1/strava-sync`;
+
+/* Garmin's Connect Developer Program stopped accepting new applications and
+   has no announced reopening date, so there is no way to obtain credentials
+   and no honest way to ship a Connect Garmin button — it could only ever
+   fail. Garmin riders have two working routes instead: nearly all Garmin
+   devices auto-sync to Strava, and a .TCX or .GPX file exported from Garmin
+   Connect can be imported directly. */
+export const GARMIN_STATUS = {
+  available: false,
+  reason: "Garmin has paused new developer applications, so no app can connect to Garmin Connect directly right now.",
+};

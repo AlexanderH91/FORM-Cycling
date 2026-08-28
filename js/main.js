@@ -5,6 +5,7 @@ import { renderAnalyze } from "./pages/analyze.js";
 import { renderLocked } from "./pages/locked.js";
 import { renderProfile } from "./pages/profile.js";
 import { renderCoach } from "./pages/coach.js";
+import { renderJourney } from "./pages/journey.js";
 import { BUILD } from "./config.js";
 
 /* Tell the badge in index.html which build the modules actually are. The two
@@ -19,7 +20,7 @@ const routes = {
   login:   { render: renderLogin,  auth: false, nav: false },
   home:    { render: renderHome,   auth: true,  nav: true },
   analyze: { render: renderAnalyze,auth: true,  nav: true },
-  journey: { render: (v)=>renderLocked(v,"Journey","Your long-term riding story lives here — it unlocks after your first few analyses."), auth: true, nav: true },
+  journey: { render: renderJourney, auth: true,  nav: true },
   // The nav and Home open the coach on your progression; a report opens it on
   // that ride. It always arrives already knowing which.
   coach:   { render: renderCoach,  auth: true,  nav: true },
