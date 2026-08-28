@@ -390,3 +390,15 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .mbody{padding:0 16px 16px}
 .mbody p{margin:0;font-size:14px}
 .mbody .cardshot{margin:0 0 12px}
+
+/* capture: the three angles as a checklist, and the next one asked for by name */
+.anglehead{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);margin:2px 0 8px}
+.nextup{border:1px solid rgba(242,194,48,.28);background:rgba(242,194,48,.07);
+  border-radius:16px;padding:14px 15px;margin:4px 0 12px}
+.nextup .nextlbl{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+  color:var(--gold);margin-bottom:5px}
+.nextup h3{margin:0 0 6px}
+.nextup p{margin:0 0 6px;font-size:14px;color:var(--muted);line-height:1.5}
+.nextup .nexthow{color:var(--ink);font-size:13.5px}
+.nextup .btn{margin-top:10px}

@@ -70,9 +70,10 @@ function drawCapture(view, user, state) {
     <div class="rec-pill hidden" id="recpill"><span class="rec-dot"></span><span id="rectime">0:00</span></div>
   </div>
   <p class="hint" id="hint"></p>
+  <div class="anglehead"><span id="progress"></span></div>
   <div class="angles" id="angles">
     ${VIEWS.map((v) => `<button class="angle" data-a="${v.key}">
-        <span class="alabel">${v.label}</span><em class="astate">${v.need}</em></button>`).join("")}
+        <span class="alabel">${v.label}</span><em class="astate"></em></button>`).join("")}
   </div>
   <div class="trim hidden" id="trim">
     <div class="lbl"><span>Analyze from</span><span id="t0l">0:00</span></div>
@@ -87,7 +88,9 @@ function drawCapture(view, user, state) {
     <input type="file" accept="video/*" class="hidden" id="file">
   </div>
   <div class="err" id="err"></div>
-  <p class="hint" id="missing"></p>
+  ${/* Not a grey hint under the button. Filming one angle and stopping was the
+        default because nothing ever asked for the next one. */""}
+  <div class="nextup hidden" id="next"></div>
   <button class="btn" id="go" disabled></button>
   <div class="footnote">Filming and analysis both happen on your phone · recording stops on its own after ${Math.round(MAX_RECORD_MS / 60000)} minutes</div>`;
 
@@ -109,8 +112,13 @@ function drawCapture(view, user, state) {
       btn.disabled = isRecording() && k !== state.angle;
       const t = state.trims[k];
       btn.querySelector(".astate").textContent =
-        state.clips[k] ? (t ? clock(t[1] - t[0]) : "…") : viewOf(k).need;
+        state.clips[k] ? (t ? `\u2713 ${clock(t[1] - t[0])}` : "…") : "not filmed";
     }
+
+    const filmed = VIEWS.filter((v) => state.clips[v.key]).length;
+    $("#progress").textContent = filmed
+      ? `${filmed} of ${VIEWS.length} angles filmed`
+      : "Film all three and FORM reads all three";
 
     // Reviewing a take you already have, or looking through the lens.
     const reviewing = !!clip && !isRecording();
@@ -125,13 +133,29 @@ function drawCapture(view, user, state) {
     goBtn.disabled = !ready || isRecording();
     goBtn.textContent = ready ? "Analyze this ride →" : "Film the side view to analyze";
 
-    /* Every review of a rival app lands on "side view only". FORM films three
-       — but only if the rider knows what the other two are worth, said here
-       rather than in a footnote under the report. */
-    const short = VIEWS.filter((v) => v.need === "optional" && !state.clips[v.key]);
-    $("#missing").textContent = ready && short.length
-      ? `Side only so far. ${short.map((v) => `${v.label}: ${v.gives}`).join(". ")}.`
-      : "";
+    /* Ask for the next angle, by name, with the reason and the setup. Every
+       report this rider has produced says "side only" — not because they chose
+       side only, but because nothing ever invited them to turn the phone. */
+    const nextUp = VIEWS.find((v) => !state.clips[v.key]);
+    const next = $("#next");
+    next.classList.toggle("hidden", !ready || !nextUp || isRecording());
+    if (ready && nextUp && !isRecording()) {
+      next.innerHTML = `
+        <div class="nextlbl">Next angle</div>
+        <h3>${nextUp.title}</h3>
+        <p>Measures ${nextUp.gives}.</p>
+        <p class="nexthow">${nextUp.hint}</p>
+        <button class="btn secondary" data-goto="${nextUp.key}">Film the ${nextUp.label.toLowerCase()} view</button>`;
+      next.querySelector("[data-goto]").onclick = () => { state.angle = nextUp.key; showLens(); paint(); };
+    }
+  }
+
+  /* Going to an angle you have not filmed means going back to the camera —
+     the review element stays loaded otherwise and you look at the last take. */
+  function showLens() {
+    play.pause();
+    play.classList.add("hidden");
+    cam.classList.remove("hidden");
   }
 
   function showClip(key) {
@@ -196,7 +220,7 @@ function drawCapture(view, user, state) {
     const btn = e.target.closest(".angle");
     if (!btn || btn.disabled) return;
     state.angle = btn.dataset.a;
-    if (state.clips[state.angle]) showClip(state.angle);
+    if (state.clips[state.angle]) showClip(state.angle); else showLens();
     paint();
   };
 
