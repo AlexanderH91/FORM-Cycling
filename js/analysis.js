@@ -509,7 +509,9 @@ async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read) {
       }
       missed = 0;
       const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
-      if (p) { stat.posed++; const row = read(p, sq, t); if (row) { stat.kept++; rows.push(row); } }
+      // The frame's own time, not the time we asked to seek to — the overlay
+      // rides on this, and a request is not a position.
+      if (p) { stat.posed++; const row = read(p, sq, video.currentTime); if (row) { stat.kept++; rows.push(row); } }
       onProgress?.(i / total);
     }
     rows.stat = stat;
@@ -548,23 +550,34 @@ export function overlayAt(track, t, tol = 0.12) {
   // Same sample on both sides, or a gap wide enough that sliding between them
   // would invent a position the rider never held.
   if (a === b || span <= 0 || span > tol) {
-    return { ...near, inBand: near.knee >= bLo && near.knee <= bHi };
+    return typeof near.knee === "number"
+      ? { ...near, inBand: near.knee >= bLo && near.knee <= bHi }
+      : { ...near };
   }
   const f = Math.min(1, Math.max(0, (t - a.t) / span));
   const mix = (x, y) => x + (y - x) * f;
   const j = {};
   for (const key of Object.keys(a.j)) {
+    if (!b.j[key]) continue;                      // a joint the model lost
     j[key] = { x: mix(a.j[key].x, b.j[key].x), y: mix(a.j[key].y, b.j[key].y) };
   }
-  const knee = mix(a.knee, b.knee);
-  return { t, j, knee, inBand: knee >= bLo && knee <= bHi };
+  /* Interpolate whatever numbers the track carries rather than only the knee:
+     the front view tracks each leg's lean, the rear tracks shoulder and pelvis
+     tilt, and the player draws all three from this one function. */
+  const out = { t, j };
+  for (const [key, v] of Object.entries(a)) {
+    if (key === "t" || key === "j" || typeof v !== "number") continue;
+    out[key] = typeof b[key] === "number" ? mix(v, b[key]) : v;
+  }
+  if (typeof out.knee === "number") out.inBand = out.knee >= bLo && out.knee <= bHi;
+  return out;
 }
 
 /* FRONT VIEW — how far each knee wanders sideways over the stroke.
    Measured per leg as the ankle→knee line's lean from vertical, so it is
    independent of how far away the phone was. */
 export async function analyzeFrontClip(blob, trim, onProgress) {
-  const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq) => {
+  const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq, t) => {
     /* Each leg stands on its own. Requiring both at once threw the whole frame
        away whenever the far ankle passed behind the cranks — which is most of
        the stroke — and one measured leg is still worth saying. */
@@ -573,7 +586,15 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
     // Rider faces the camera: their left is on our right, so inward flips.
     if (vis(25) && vis(27)) row.left = fromVertical(sq(p[25]), sq(p[27]), true);
     if (vis(26) && vis(28)) row.right = fromVertical(sq(p[26]), sq(p[28]), false);
-    return (row.left != null || row.right != null) ? row : null;
+    if (row.left == null && row.right == null) return null;
+    /* Raw image coordinates travel with the row so the report can replay this
+       clip with the same lines drawn on it. Without them, switching the player
+       to the front view would show video with nothing marked — which is the
+       one thing the front view exists to show. */
+    const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
+    row.t = t;
+    row.j = { lknee: xy(p[25]), lankle: xy(p[27]), rknee: xy(p[26]), rankle: xy(p[28]) };
+    return row;
   });
 
   const MIN = 12 * 2;                          // two seconds of a usable leg
@@ -584,7 +605,8 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
   if (leftVals.length < MIN && rightVals.length < MIN)
     return { gate: "We couldn't hold either knee in view for long enough from the front. Frame both legs from the waist down, with the light in front of you, and film again.", seen };
 
-  const out = { seen, kneeTravel: {} };
+  const out = { seen, kneeTravel: {}, trim,
+                track: rows.filter((r) => r.j).map((r) => ({ t: r.t, j: r.j, left: r.left, right: r.right })) };
   if (leftVals.length >= MIN) out.kneeTravel.left = +amplitude(leftVals).toFixed(1);
   if (rightVals.length >= MIN) out.kneeTravel.right = +amplitude(rightVals).toFixed(1);
   const { left, right } = out.kneeTravel;
@@ -602,7 +624,7 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
    stroke. Rock corroborates a saddle that is too high; it does not outrank
    the side view, which is the view that measures saddle height. */
 export async function analyzeRearClip(blob, trim, onProgress) {
-  const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq) => {
+  const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq, t) => {
     // Shoulder line and hip line stand alone — a jersey hides hips far more
     // often than shoulders, and shoulder rock on its own is still a finding.
     const vis = (i) => (p[i].visibility ?? 1) >= CAPTURE.minJointVisibility;
@@ -610,7 +632,11 @@ export async function analyzeRearClip(blob, trim, onProgress) {
     const row = { vis: mean([11, 12, 23, 24].map((i) => p[i].visibility ?? 1)) };
     if (vis(11) && vis(12)) row.shoulder = tilt(p[11], p[12]);
     if (vis(23) && vis(24)) row.pelvis = tilt(p[23], p[24]);
-    return (row.shoulder != null || row.pelvis != null) ? row : null;
+    if (row.shoulder == null && row.pelvis == null) return null;
+    const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
+    row.t = t;
+    row.j = { lsho: xy(p[11]), rsho: xy(p[12]), lhip: xy(p[23]), rhip: xy(p[24]) };
+    return row;
   });
 
   const MIN = 12 * 2;
@@ -621,7 +647,8 @@ export async function analyzeRearClip(blob, trim, onProgress) {
   if (sh.length < MIN && pv.length < MIN)
     return { gate: "We couldn't hold your shoulders or hips in view for long enough from behind. Stand the phone behind the rear wheel with light from the side, and film again.", seen };
 
-  const out = { seen };
+  const out = { seen, trim,
+                track: rows.filter((r) => r.j).map((r) => ({ t: r.t, j: r.j, shoulder: r.shoulder, pelvis: r.pelvis })) };
   if (sh.length >= MIN) out.shoulderRock = +amplitude(sh).toFixed(1);
   if (pv.length >= MIN) out.pelvicRock = +amplitude(pv).toFixed(1);
   return out;
@@ -855,10 +882,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   let fix;
   if (pooled.settled && !sameSide && spread > kHi - kLo)
     fix = {
-      title: "Your rides do not agree yet",
-      line: `Across ${pooled.rides} rides your knee has read anywhere from ${pooled.lo.toFixed(0)}° to ${pooled.hi.toFixed(0)}° at the bottom — a spread wider than the ${kLo}–${kHi}° band itself. Your saddle did not move that much between rides, so this is the filming, not you.`,
-      cue: "Film from the same spot each time: phone at saddle height, straight out to the side, whole bike in frame, and trim to a stretch where you are pedalling steadily rather than starting or stopping.",
-      why: "Until two rides filmed the same way land on the same answer, no saddle number here is worth acting on. Getting the camera consistent is the one thing that makes everything else in this report mean something.",
+      title: "Film it the same way twice",
+      line: `Your knee has read anywhere from ${pooled.lo.toFixed(0)}° to ${pooled.hi.toFixed(0)}° across ${pooled.rides} rides — a spread wider than the whole ${kLo}–${kHi}° band. Your saddle did not move by that much, so what is moving is the camera.`,
+      cue: "Same spot every time: phone at saddle height, straight out to the side rather than at an angle, whole bike in frame. Then trim to a stretch where you are already pedalling steadily, not starting or easing off.",
+      why: "This is worth ten minutes because everything else waits on it. Saddle height is the setting the rest of a fit is built on — get two rides that agree and FORM can tell you which way to move it and by how much. Until then any number it gave you would be a coin flip dressed up as advice.",
     };
   else if (pooled.settled && pooledVerdict === "borderline" && edgeSide)
     fix = {
@@ -964,6 +991,22 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     });
   }
 
+  {
+    // Mid-stroke, where the torso is doing what it does for most of the ride.
+    const torsoRow = closestTo(rows.map((_, i) => i), "torso", torso.value);
+    specs.push({
+      key: "torso", row: torsoRow,
+      caption: `Your back and hips at this moment, ${rows[torsoRow].torso.toFixed(0)}\u00b0 above horizontal. The dashed line is level.`,
+      draw: (ctx, j, w, h) => {
+        if (!SEEN(j.sho) || !SEEN(j.hip)) return false;
+        plumb(ctx, { x: j.hip.x, y: j.hip.y }, { x: j.sho.x, y: j.hip.y }, "#9C9A93", w, h);
+        limb(ctx, [j.hip, j.sho], IN_BAND, w, h);
+        tag(ctx, `${rows[torsoRow].torso.toFixed(0)}\u00b0`, j.sho, IN_BAND, w, h);
+        return [j.hip, j.sho];
+      },
+    });
+  }
+
   if (foreaft?.at != null) {
     specs.push({
       key: "foreaft", row: foreaft.at,
@@ -1050,6 +1093,13 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     pooled: { value: +pooled.value.toFixed(1), u: +pooled.u.toFixed(2), rides: pooled.rides,
               settled: pooled.settled, lo: +pooled.lo.toFixed(1), hi: +pooled.hi.toFixed(1) },
     fix,
+    /* Every card answers "so what?".
+       A band and a number tell a rider what was measured; they do not tell
+       them why to care or what better would feel like. `means` is that
+       sentence, and it is not optional — a card without one is a fact filed at
+       someone rather than coaching. It stays inside what FORM can support:
+       what the joint does in the stroke, where the load goes, and what riders
+       notice when it moves. No watt claims, no injury promises. */
     cards: (provisional ? stripVerdicts : (c) => c)([
       /* Two numbers, deliberately: how much the rider varies (±sd, about them)
          and how well the centre is known (±u, about the read). Showing only the
@@ -1058,18 +1108,22 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
          edge" up top and "Close" down here is telling two stories about one
          joint. */
       { name: "Knee at 6 o'clock", value: k + "°", shot: shots.get("knee"),
+        means: "This one setting decides where your power comes from. Straighten too far and you reach for the bottom of the stroke, so the hips rock and the load slides onto the back of the knee. Stay too folded and you never get through the strongest part of the push. Inside the band the leg works where it is strongest, and long rides stop aching in the same place.",
         verdict: pooled.settled && pooledVerdict === "borderline" ? "At edge" : word(pooledVerdict),
         note: `Band ${kLo}–${kHi}° while riding — this is the saddle-height check. You vary ±${kSd}° from stroke to stroke across ${kneeBDC.n} clearly-seen strokes${kneeBDC.n < kneeBDC.of ? ` of ${kneeBDC.of}` : ""}; averaged, that puts this ride's centre within ±${kU.toFixed(1)}°.${
           pooled.rides > 1 ? ` Pooled with your previous ${pooled.rides - 1} ride${pooled.rides > 2 ? "s" : ""}: ${pv}° ±${pooled.u.toFixed(1)}°.` : ""}` },
-      ...(toeBDC ? [{ name: "Foot at 6 o'clock", shot: shots.get("foot"), value: toeBDC.value.toFixed(0) + "° toe-down", verdict: word(toeVerdict),
+      ...(toeBDC ? [{ name: "Foot at 6 o'clock", shot: shots.get("foot"),
+        means: "Pointing the toe hard at the bottom hands the work to your calf — a far smaller muscle than the ones above the knee, and the first to go on a long climb. A flatter foot lets the quad and glute finish the stroke instead.", value: toeBDC.value.toFixed(0) + "° toe-down", verdict: word(toeVerdict),
         note: `Band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}° toe-down at the bottom. ±${toeBDC.sd.toFixed(1)}° across your strokes.` }] : []),
-      ...(hipTDC ? [{ name: "Hip fold at the top", shot: shots.get("hip"), value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
+      ...(hipTDC ? [{ name: "Hip fold at the top", shot: shots.get("hip"),
+        means: "How closed you are at the top of each stroke. Too closed and the top of the circle gets blocked — riders feel it as a catch, or as not being able to get low on the bars without losing power. It opens up through saddle setback and bar height, not by trying harder.", value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
         note: `Fitting window ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° depending on flexibility. ±${hipTDC.sd.toFixed(1)}° across your strokes.` }] : []),
       /* Reported as a position, never as a verdict: knee-over-axle is where
          fitters START, not where riders should end up, and the two assumptions
          under the centimetre figure are named rather than hidden. */
       ...(foreaft ? [{
         name: "Knee over the pedal, 3 o'clock", shot: shots.get("foreaft"),
+        means: "Where your knee sits over the pedal changes how the work splits between quads and glutes, and how much of your weight ends up on your hands. Further forward leans on the quads and the front of the knee; further back brings in the glutes and hamstrings and takes weight off the bars.",
         value: foreaft.cm != null
           ? `${foreaft.cm > 0 ? "+" : ""}${foreaft.cm.toFixed(1)} cm`
           : `${foreaft.ofFemur > 0 ? "+" : ""}${(foreaft.ofFemur * 100).toFixed(0)}% of thigh`,
@@ -1078,8 +1132,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
             ? " Centimetres are approximate: scaled from your height through an average thigh proportion, and the axle is placed under the ball of your foot rather than seen."
             : " Add your height on the Me screen to see this in centimetres."}`,
       }] : []),
-      { name: "Cadence", value: cadence.toFixed(0) + " rpm", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Research sweet spot ${BANDS.cadence[0]}–${BANDS.cadence[1]} rpm for experienced riders.` },
-      { name: "Torso angle", value: torso.value.toFixed(0) + "°", note: "Above horizontal. What it's worth in watts depends on speed — ride-file pairing comes next." },
+      { name: "Cadence", value: cadence.toFixed(0) + " rpm",
+        means: "Spinning faster shifts the effort off your legs and onto your heart and lungs; grinding does the opposite. Neither is wrong — but a long way from your natural cadence costs you late in a ride, when whichever system is carrying it starts to fade.", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Research sweet spot ${BANDS.cadence[0]}–${BANDS.cadence[1]} rpm for experienced riders.` },
+      { name: "Torso angle", value: torso.value.toFixed(0) + "°", shot: shots.get("torso"),
+        means: "How far forward you are folded. Lower cuts through the air better; higher is easier to breathe in and hold. The right answer is the lowest position you can stay in without shifting around, because a position you keep leaving is slower than a higher one you can hold.", note: "Above horizontal. What it's worth in watts depends on speed — ride-file pairing comes next." },
     ]),
   };
 }

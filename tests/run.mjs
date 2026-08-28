@@ -44,14 +44,28 @@ const suites = readdirSync(HERE)
 
 if (!suites.length) { console.error("no suites matched"); server.close(); process.exit(1); }
 
+/* Every suite gets a deadline. Without one, a suite whose browser never comes
+   up waits forever and takes the whole run with it — which is exactly what
+   happened, and from the outside it is indistinguishable from a slow test. A
+   suite that hits the wall is reported as a failure, because that is what it
+   is. */
+const SUITE_TIMEOUT_MS = Number(process.env.FORM_TEST_TIMEOUT ?? 180_000);
+
 const run = (file) => new Promise((resolve) => {
   const child = spawn(process.execPath, [join(HERE, file)], {
     env: { ...process.env, FORM_TEST_URL: base },
   });
-  let out = "";
+  let out = "", settled = false;
+  const finish = (code) => { if (!settled) { settled = true; clearTimeout(timer); resolve({ file, code, out }); } };
+  const timer = setTimeout(() => {
+    out += `\nsuite exceeded ${SUITE_TIMEOUT_MS / 1000}s and was killed\n`;
+    child.kill("SIGKILL");
+    finish(124);
+  }, SUITE_TIMEOUT_MS);
   child.stdout.on("data", (d) => (out += d));
   child.stderr.on("data", (d) => (out += d));
-  child.on("close", (code) => resolve({ file, code, out }));
+  child.on("close", finish);
+  child.on("error", (e) => { out += `\nfailed to start: ${e.message}\n`; finish(1); });
 });
 
 const queue = [...suites];

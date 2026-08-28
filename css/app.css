@@ -356,3 +356,37 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .pchip.off{color:#E0603A;border-color:rgba(224,96,58,.35)}
 .sheetnote{font-size:13px;color:var(--muted);line-height:1.5;
   border-left:2px solid var(--glassline);padding-left:12px;margin:16px 0 0}
+
+/* player: angle tabs and tools */
+.angletabs{display:flex;gap:6px;padding:10px 12px 0}
+.angletabs button{flex:1;cursor:pointer;background:rgba(255,255,255,.05);
+  border:1px solid var(--glassline);color:var(--muted);border-radius:10px;padding:8px 6px;
+  font-family:var(--body);font-size:13px;font-weight:600}
+.angletabs button.on{background:var(--gold);border-color:var(--gold);color:#0B0B0B}
+.mv-tools{display:flex;gap:8px;padding:0 12px 12px}
+.tool{flex:1;display:flex;align-items:center;justify-content:center;gap:7px;cursor:pointer;
+  text-decoration:none;background:rgba(255,255,255,.05);border:1px solid var(--glassline);
+  color:var(--muted);border-radius:11px;padding:10px 6px;font-family:var(--body);
+  font-size:13px;font-weight:600;min-height:44px}
+.tool.on{color:var(--gold);border-color:rgba(242,194,48,.45);background:rgba(242,194,48,.10)}
+.tool .tico{font-size:14px;line-height:1}
+.tool .cmic{width:9px;height:14px;border-radius:5px;background:currentColor;
+  box-shadow:0 6px 0 -3px currentColor;opacity:.9}
+.player figcaption{padding:0 14px 14px;font-size:12.5px;color:var(--muted);line-height:1.45}
+
+/* measurement cards: meaning first, working behind a tap */
+.mcard{padding:0;overflow:hidden}
+.mhead{display:block;width:100%;text-align:left;cursor:pointer;background:none;border:none;
+  color:inherit;font-family:var(--body);padding:16px 16px 14px}
+.mhead .row{display:flex;justify-content:space-between;align-items:baseline;gap:12px}
+.mhead h3{margin:0}
+.mhead .val{font-family:var(--mono);font-size:15px;white-space:nowrap;color:var(--ink)}
+.mhead .val em{font-style:normal;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--gold)}
+.mhead .means{display:block;color:var(--muted);font-size:14.5px;line-height:1.55;margin-top:9px}
+.mhead .mtoggle{display:inline-flex;align-items:center;gap:6px;margin-top:12px;
+  font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--gold)}
+.mhead .mtoggle i{font-style:normal;transition:transform .2s ease}
+.mcard.open .mtoggle i{transform:rotate(180deg)}
+.mbody{padding:0 16px 16px}
+.mbody p{margin:0;font-size:14px}
+.mbody .cardshot{margin:0 0 12px}

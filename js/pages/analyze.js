@@ -50,6 +50,12 @@ function stopCamera(state) {
 
 function teardown(state) {
   stopCamera(state);
+  /* The report's player keeps a video decoding and a frame callback running.
+     Its teardown was being returned and dropped on the floor, so leaving the
+     report left both alive — which on a phone is a video still decoding behind
+     whatever screen you moved to. */
+  try { state.disposePlayer?.(); } catch { /* a failed teardown must not block the rest */ }
+  state.disposePlayer = null;
   for (const k of Object.keys(state.urls)) URL.revokeObjectURL(state.urls[k]);
   state.urls = {};
 }
@@ -311,7 +317,13 @@ async function runAnalysis(view, user, state) {
     }
     // Keyframes are frames of your video. The promise is that video never
     // leaves the phone, so they are shown here and never sent to the server.
-    const { keyframes, track, ...stored } = report;
+    /* Per-frame joint positions are derived from the video, so they are held
+       in memory for the player and never sent. The front and rear views now
+       carry their own tracks too — stripping only the top-level one would have
+       quietly shipped those. */
+    const strip = (o) => { if (!o) return o; const { track, ...rest } = o; return rest; };
+    const { keyframes, track, ...top } = report;
+    const stored = { ...top, front: strip(top.front), rear: strip(top.rear) };
     const { error } = await supa.from("cycling_sessions").insert({
       user_id: user.id,
       cadence_rpm: report.cadence ?? null,
@@ -319,7 +331,7 @@ async function runAnalysis(view, user, state) {
       report: stored,
     });
     if (error) throw error;
-    drawReport(view, report, state.clips.side);
+    state.disposePlayer = drawReport(view, report, state.clips);
   } catch (e) {
     view.querySelector("#err").textContent = "Analysis failed: " + e.message;
     stage.textContent = "Something went wrong — your clips are still on your phone; try again.";
@@ -364,12 +376,14 @@ function addExtraViewCards(r) {
 
   const f = r.front;
   if (f?.gate) {
-    r.cards.push({ name: "Knees from the front", value: "—", note: f.gate + why(f.seen) });
+    r.cards.push({ name: "Knees from the front", value: "—", note: f.gate + why(f.seen),
+      means: "The front view is the only one that can see a knee tracking in or out — no other angle shows it. Worth another go, because it is where most knee aches are explained." });
   } else if (f) {
     const t = f.kneeTravel;
     const both = t.left != null && t.right != null;
     r.cards.push({
       name: "Knee travel (front)",
+      means: "A knee that swings in or out is spending part of every stroke sideways instead of down, and it is the pattern most often sitting behind an ache on the inside or outside of the joint. Cleat position, saddle height and foot support all move it — which is why it is worth knowing before you change any of them.",
       value: both ? `${t.left}° L · ${t.right}° R` : `${t.left ?? t.right}° ${f.oneLegOnly === "left" ? "L" : "R"}`,
       note: (both
         ? "How far each knee leans in and out across the stroke, measured from vertical."
@@ -380,6 +394,7 @@ function addExtraViewCards(r) {
       const even = f.asymmetry < 1.35;
       r.cards.push({
         name: "Left / right evenness",
+        means: "A leg travelling further than the other is doing a different job. Riders usually meet it as one side tiring first on a long climb, or as a saddle that never quite feels square underneath them.",
         value: `${f.asymmetry}×`,
         verdict: even ? "Even" : "Watch",
         note: even
@@ -391,15 +406,18 @@ function addExtraViewCards(r) {
 
   const b = r.rear;
   if (b?.gate) {
-    r.cards.push({ name: "Shoulders and pelvis (behind)", value: "—", note: b.gate + why(b.seen) });
+    r.cards.push({ name: "Shoulders and pelvis (behind)", value: "—", note: b.gate + why(b.seen),
+      means: "From behind, FORM can see whether you sit level or rock to chase the pedals — the check that confirms or contradicts the saddle-height reading from the side." });
   } else if (b) {
     if (b.pelvicRock != null) r.cards.push({
       name: "Pelvic rock (behind)",
+      means: "Hips rocking side to side usually means you are reaching for the bottom of the stroke — the classic sign of a saddle a touch too high. Every degree of rock is movement going sideways instead of into the pedals, and it is what starts rubbing after two hours.",
       value: `${b.pelvicRock}°`,
       note: "How much your hips tilt side to side over the stroke. Reported without a verdict — FORM has no cited band for it yet.",
     });
     if (b.shoulderRock != null) r.cards.push({
       name: "Shoulder rock (behind)",
+      means: "Shoulders usually follow the hips. On its own this can simply be how you ride; sitting next to pelvic rock, it is the same story told twice, and it is the hips that need fixing.",
       value: `${b.shoulderRock}°`,
       note: "Side-to-side tilt across the shoulders over the stroke.",
     });
@@ -411,9 +429,9 @@ function addExtraViewCards(r) {
   }
 }
 
-export function drawReport(view, r, sideClip) {
+export function drawReport(view, r, clips) {
   const f = r.fix;
-  const canPlay = !r.gate && sideClip && r.track?.length;
+  const canPlay = !r.gate && clips?.side && r.track?.length;
   view.innerHTML = `
   ${appbar("new report")}
   ${r.gate ? `
@@ -437,6 +455,9 @@ export function drawReport(view, r, sideClip) {
     ${canPlay ? `
       <div class="sect">Your ride, measured</div>
       <div class="glass player">
+        ${/* One player, three angles. Switching tabs is how a rider sees what
+              each camera position is actually for. */""}
+        <div class="angletabs" id="mvtabs"></div>
         <div class="stagewrap">
           <video id="mv" class="shot" playsinline muted loop preload="auto"></video>
           <canvas id="mvc"></canvas>
@@ -449,23 +470,39 @@ export function drawReport(view, r, sideClip) {
             ${[0.25, 0.5, 1].map((x) => `<button data-x="${x}" class="${x === 1 ? "on" : ""}">${x}×</button>`).join("")}
           </div>
         </div>
-        <figcaption>Knee angle, drawn on the joints the model found in each frame. Green in band, gold out.</figcaption>
+        <div class="mv-tools">
+          <button id="mvlines" class="tool on"><span class="tico">◠</span>Lines</button>
+          <button id="mvsave" class="tool"><span class="tico">↓</span>Save frame</button>
+          <a href="#/coach?about=report" class="tool"><span class="tico cmic"></span>Coach</a>
+        </div>
+        <figcaption id="mvcap"></figcaption>
       </div>` : ""}
     ${/* Stills live inside the card that claims each number now. This only
           speaks up when they could not be made at all. */""}
     ${r.keyframes?.length ? "" : `<div class="glass card"><p><strong>No stills this time</strong> — ${
       r.stillsFail ?? "the frames could not be pulled back out of the clip"}. The measurements below are unaffected; they were read from the clip as it was sampled.</p></div>`}
     <div class="sect">Measured</div>
-    ${r.cards.map((c) => `
-      <div class="glass card"><div class="row"><h3>${c.name}</h3>
-        <div class="val">${c.value} ${c.verdict ? `<em>${c.verdict}</em>` : ""}</div></div>
-        ${/* The frame the number came from, inside the card that claims it. */""}
-        ${c.shot ? `<figure class="cardshot">
-            <img src="${c.shot.src}" alt="${c.name} measured on your ride" loading="lazy">
-            ${c.shot.drawn ? `<figcaption>${c.shot.caption}</figcaption>`
-              : `<figcaption>Your frame at that moment. The joints were not clear enough here to draw on, so nothing is drawn.</figcaption>`}
-          </figure>` : ""}
-        <p>${c.note}</p></div>`).join("")}
+    ${/* Meaning on the face of the card; the numbers and the frame behind one
+          tap. A rider opening a report wants to know what it means for their
+          riding — the band and the standard deviation are the working, and
+          working belongs underneath. */""}
+    ${r.cards.map((c, i) => `
+      <div class="glass card mcard" data-card="${i}">
+        <button class="mhead" type="button" aria-expanded="false" aria-controls="mbody${i}">
+          <span class="row"><h3>${c.name}</h3>
+            <span class="val">${c.value} ${c.verdict ? `<em>${c.verdict}</em>` : ""}</span></span>
+          ${c.means ? `<span class="means">${c.means}</span>` : ""}
+          <span class="mtoggle">${c.shot ? "See it on your ride" : "See the numbers"}<i>▾</i></span>
+        </button>
+        <div class="mbody" id="mbody${i}" hidden>
+          ${c.shot ? `<figure class="cardshot">
+              <img src="${c.shot.src}" alt="${c.name} measured on your ride" loading="lazy">
+              ${c.shot.drawn ? `<figcaption>${c.shot.caption}</figcaption>`
+                : `<figcaption>Your frame at that moment. The joints were not clear enough here to draw on, so nothing is drawn.</figcaption>`}
+            </figure>` : ""}
+          <p>${c.note}</p>
+        </div>
+      </div>`).join("")}
     ${viewsBlock(r)}
     <a class="btn secondary coach-cta" href="#/coach?about=report">
       <span class="cmic"></span>Talk about this ride</a>
@@ -488,7 +525,20 @@ export function drawReport(view, r, sideClip) {
     made.textContent = "Change logged";
   };
 
-  if (canPlay) wirePlayer(view, r, sideClip);
+  /* Meaning on the face, working underneath. Native <details> would do this,
+     but the summary marker fights the card layout on iOS, so it is a button
+     and a hidden panel with the aria wiring done by hand. */
+  for (const head of view.querySelectorAll(".mhead")) {
+    head.onclick = () => {
+      const body = view.querySelector("#" + head.getAttribute("aria-controls"));
+      const open = head.getAttribute("aria-expanded") === "true";
+      head.setAttribute("aria-expanded", String(!open));
+      body.hidden = open;
+      head.closest(".mcard").classList.toggle("open", !open);
+    };
+  }
+
+  if (canPlay) return wirePlayer(view, r, clips);
 }
 
 /* Where the picture actually sits inside its box under object-fit: contain.
@@ -502,29 +552,121 @@ export function fitContain(boxW, boxH, vidW, vidH) {
   return { x: (boxW - w) / 2, y: (boxH - h) / 2, w, h };
 }
 
+/* What each angle draws, and what it is showing you.
+   The side view measures a joint angle, so it draws the joint. The front view
+   measures how far a knee leans, so it draws each shin against a plumb line —
+   the reference it is being judged against. The rear view measures tilt, so it
+   draws the shoulder and hip lines against level. In every case the dashed
+   line is the reference and the solid one is the rider. */
+const ANGLE_VIEWS = {
+  side: {
+    label: "Side",
+    caption: "Knee angle, drawn on the joints the model found in each frame. Green in band, gold out.",
+    track: (r) => r.track,
+    trim: (r) => r.trim,
+    readout: (f) => (typeof f.knee === "number" ? `${f.knee.toFixed(0)}°` : "–"),
+    colour: (f) => (f.inBand ? IN_BAND : OUT),
+    draw(ctx, f, at, lw) {
+      // overlayAt drops a joint the model lost between samples, so check
+      // before mapping rather than drawing to undefined.
+      if (!f.j.hip || !f.j.knee || !f.j.ankle) return;
+      line(ctx, [f.j.hip, f.j.knee, f.j.ankle].map(at), this.colour(f), lw);
+    },
+  },
+  front: {
+    label: "Front",
+    caption: "Each shin against a plumb line. The gap at the knee is how far it leans in or out across the stroke.",
+    track: (r) => r.front?.track,
+    trim: (r) => r.front?.trim,
+    readout: (f) => {
+      const v = [f.left, f.right].filter((x) => typeof x === "number");
+      return v.length ? `${Math.max(...v.map(Math.abs)).toFixed(0)}°` : "–";
+    },
+    draw(ctx, f, at, lw) {
+      for (const [knee, ankle] of [["lknee", "lankle"], ["rknee", "rankle"]]) {
+        if (!f.j[knee] || !f.j[ankle]) continue;
+        const k = at(f.j[knee]), a = at(f.j[ankle]);
+        dashed(ctx, [a[0], a[1]], [a[0], k[1]], lw);      // straight up from the ankle
+        line(ctx, [k, a], OUT, lw);
+      }
+    },
+  },
+  rear: {
+    label: "Behind",
+    caption: "Your shoulder line and hip line against level. Tilt here is the rocking that chases the pedals.",
+    track: (r) => r.rear?.track,
+    trim: (r) => r.rear?.trim,
+    readout: (f) => (typeof f.pelvis === "number" ? `${Math.abs(f.pelvis).toFixed(0)}°` : "–"),
+    draw(ctx, f, at, lw) {
+      for (const [l, rgt] of [["lsho", "rsho"], ["lhip", "rhip"]]) {
+        if (!f.j[l] || !f.j[rgt]) continue;
+        const A = at(f.j[l]), B = at(f.j[rgt]);
+        const mid = (A[1] + B[1]) / 2;
+        dashed(ctx, [A[0], mid], [B[0], mid], lw);        // level
+        line(ctx, [A, B], OUT, lw);
+      }
+    },
+  },
+};
+
+const IN_BAND = "#34D27B";
+const OUT = "#F2C230";
+
+function line(ctx, pts, colour, lw) {
+  ctx.lineWidth = lw; ctx.lineJoin = ctx.lineCap = "round"; ctx.strokeStyle = colour;
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.stroke();
+  ctx.fillStyle = colour;
+  for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, lw * 1.1, 0, Math.PI * 2); ctx.fill(); }
+}
+
+function dashed(ctx, a, b, lw) {
+  ctx.save();
+  ctx.setLineDash([lw * 1.6, lw * 1.6]);
+  ctx.lineWidth = Math.max(1.5, lw * 0.45);
+  ctx.strokeStyle = "rgba(255,255,255,.55)";
+  ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+  ctx.restore();
+}
+
+/* Plays the analysed section back with the measurement riding on the rider.export function fitContain(boxW, boxH, vidW, vidH) {
+  if (!boxW || !boxH) return null;
+  if (!vidW || !vidH) return { x: 0, y: 0, w: boxW, h: boxH };
+  const scale = Math.min(boxW / vidW, boxH / vidH);
+  const w = vidW * scale, h = vidH * scale;
+  return { x: (boxW - w) / 2, y: (boxH - h) / 2, w, h };
+}
+
 /* Plays the analysed section back with the measurement riding on the rider.
    The track is frame-aligned to the clip, so at any moment we draw the joints
    the model actually found nearest that time — and nothing when it found none,
    which is the same rule the stills follow. */
-function wirePlayer(view, r, clip) {
+function wirePlayer(view, r, clips) {
   const video = view.querySelector("#mv");
   const canvas = view.querySelector("#mvc");
   const live = view.querySelector("#mvang");
   const playBtn = view.querySelector("#mvplay");
   const seek = view.querySelector("#mvseek");
-  if (!video || !clip) return () => {};
+  const tabs = view.querySelector("#mvtabs");
+  const cap = view.querySelector("#mvcap");
+  if (!video || !clips?.side) return () => {};
 
-  const url = URL.createObjectURL(clip);
-  video.src = url;
-  const [t0, t1] = r.trim ?? [0, 0];
-  const track = r.track;
+  // Only angles that have both footage and something measured on them.
+  const available = Object.entries(ANGLE_VIEWS)
+    .filter(([k, v]) => clips[k] && v.track(r)?.length)
+    .map(([k]) => k);
+  if (!available.length) return () => {};
+
+  let angle = available[0];
+  let url = null, raf = null, showLines = true;
   const ctx = canvas.getContext("2d");
+  const useVFC = typeof video.requestVideoFrameCallback === "function";
+  const spec = () => ANGLE_VIEWS[angle];
+  const range = () => spec().trim(r) ?? [0, video.duration || 0];
 
-  /* Landmarks are normalised to the VIDEO FRAME, not to the element. If the
-     frame is letterboxed inside its box — which it is the moment the clip's
-     aspect and the card's differ — mapping straight onto the element puts the
-     skeleton somewhere the rider is not. Find where the picture actually sits
-     and map into that. */
+  /* Landmarks are normalised to the VIDEO FRAME, not the element. Find where
+     the picture actually sits inside its box and map into that. */
   const contentRect = () =>
     fitContain(video.clientWidth, video.clientHeight, video.videoWidth, video.videoHeight);
 
@@ -533,8 +675,6 @@ function wirePlayer(view, r, clip) {
     if (!box) return;
     const bw = video.clientWidth, bh = video.clientHeight;
     const dpr = Math.min(3, window.devicePixelRatio || 1);
-    // Height matters as much as width — checking only width left a stale
-    // bitmap once the real aspect arrived, and every point drew low.
     if (canvas.width !== Math.round(bw * dpr) || canvas.height !== Math.round(bh * dpr)) {
       canvas.width = Math.round(bw * dpr);
       canvas.height = Math.round(bh * dpr);
@@ -542,76 +682,118 @@ function wirePlayer(view, r, clip) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, bw, bh);
 
-    // No landmarks near this moment: draw nothing rather than a stale pose.
-    const f = overlayAt(track, video.currentTime);
-    if (!f) { live.textContent = "–"; return; }
+    const f = overlayAt(spec().track(r), video.currentTime);
+    if (!f) { live.textContent = "\u2013"; return; }
+    live.textContent = spec().readout(f);
+    live.style.color = f.inBand ? IN_BAND : OUT;
+    if (!showLines) return;
     const at = (p) => [box.x + p.x * box.w, box.y + p.y * box.h];
-    const colour = f.inBand ? "#34D27B" : "#F2C230";
-    const pts = [f.j.hip, f.j.knee, f.j.ankle].map(at);
-    ctx.lineWidth = Math.max(3, box.w * 0.011);
-    ctx.lineJoin = ctx.lineCap = "round";
-    ctx.strokeStyle = colour;
-    ctx.beginPath();
-    pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-    ctx.stroke();
-    ctx.fillStyle = colour;
-    for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, ctx.lineWidth * 1.1, 0, Math.PI * 2); ctx.fill(); }
-    live.textContent = `${f.knee.toFixed(0)}°`;
-    live.style.color = colour;
+    spec().draw(ctx, f, at, Math.max(3, box.w * 0.011));
   }
 
-  /* Drive the overlay off the frames the video actually presents where the
-     browser offers that, so the skeleton is redrawn for the frame on screen
-     rather than for whenever rAF happened to fire. timeupdate alone fires
-     about four times a second, which is nowhere near a pedal stroke. */
-  let raf = null;
-  const useVFC = typeof video.requestVideoFrameCallback === "function";
   const loop = () => {
     draw();
     if (video.paused) return;
+    const [t0, t1] = range();
     seek.value = String(((video.currentTime - t0) / Math.max(0.001, t1 - t0)) * 1000);
     raf = useVFC ? video.requestVideoFrameCallback(loop) : requestAnimationFrame(loop);
   };
-  // One canceller: a video-frame callback handle is not an animation-frame one,
-  // and cancelling the wrong kind leaves the loop running after teardown.
   const stop = () => {
     if (raf == null) return;
     if (useVFC) video.cancelVideoFrameCallback?.(raf); else cancelAnimationFrame(raf);
     raf = null;
   };
 
-  video.onloadedmetadata = async () => {
-    /* A muted inline video that has never played shows black on iOS, however
-       carefully you seek it — the decoder has produced nothing to show. Play it
-       for an instant and pause: that is what puts a real first frame under the
-       overlay instead of a skeleton floating on a black rectangle. */
-    try { await video.play(); video.pause(); } catch { /* seek alone, then */ }
-    // Nudge off the exact start: seeking to a time it already sits on fires no
-    // seek, so the element stays black behind a play button.
-    video.currentTime = t0 + 0.03;
-    draw();
-  };
+  async function load(next) {
+    stop();
+    angle = next;
+    for (const b of tabs.querySelectorAll("button")) b.classList.toggle("on", b.dataset.a === angle);
+    cap.textContent = spec().caption;
+    if (url) URL.revokeObjectURL(url);
+    url = URL.createObjectURL(clips[angle]);
+    video.src = url;
+    video.load();
+    playBtn.textContent = "\u25b6";
+    video.onloadedmetadata = async () => {
+      // Until a muted inline video has actually played, iOS has decoded no
+      // frame and the element shows black however carefully you seek it.
+      try { await video.play(); video.pause(); } catch { /* seek alone, then */ }
+      video.currentTime = range()[0] + 0.03;
+      draw();
+    };
+  }
+
+  tabs.innerHTML = available.map((k) =>
+    `<button data-a="${k}" class="${k === angle ? "on" : ""}">${ANGLE_VIEWS[k].label}</button>`).join("");
+  for (const b of tabs.querySelectorAll("button")) b.onclick = () => load(b.dataset.a);
+
   video.onloadeddata = draw;
   video.onresize = draw;
   video.onseeked = draw;
   video.ontimeupdate = draw;
+  video.onpause = () => { playBtn.textContent = "\u25b6"; stop(); };
+  addEventListener("resize", draw);
+
   playBtn.onclick = () => {
-    if (video.paused) { if (video.currentTime >= t1 - 0.05) video.currentTime = t0; video.play(); playBtn.textContent = "❚❚"; loop(); }
-    else { video.pause(); playBtn.textContent = "▶"; stop(); }
+    const [t0, t1] = range();
+    if (video.paused) {
+      if (video.currentTime >= t1 - 0.05 || video.currentTime < t0) video.currentTime = t0;
+      video.play(); playBtn.textContent = "\u275a\u275a"; loop();
+    } else { video.pause(); playBtn.textContent = "\u25b6"; stop(); }
   };
-  video.onplay = () => { playBtn.textContent = "❚❚"; loop(); };
-  video.onpause = () => { playBtn.textContent = "▶"; stop(); };
-  // Loop the trimmed section, not the whole clip.
-  const fence = () => { if (video.currentTime > t1) video.currentTime = t0; };
-  video.addEventListener("timeupdate", fence);
-  seek.oninput = () => { video.currentTime = t0 + (+seek.value / 1000) * (t1 - t0); draw(); };
+  seek.oninput = () => {
+    const [t0, t1] = range();
+    video.currentTime = t0 + (t1 - t0) * (seek.value / 1000);
+  };
   for (const b of view.querySelectorAll(".mv-speeds button")) {
     b.onclick = () => {
       video.playbackRate = +b.dataset.x;
-      view.querySelectorAll(".mv-speeds button").forEach((o) => o.classList.toggle("on", o === b));
+      for (const o of view.querySelectorAll(".mv-speeds button")) o.classList.toggle("on", o === b);
     };
   }
-  addEventListener("resize", draw);
 
-  return () => { stop(); video.pause(); video.removeAttribute("src"); URL.revokeObjectURL(url); };
+  const linesBtn = view.querySelector("#mvlines");
+  linesBtn.onclick = () => {
+    showLines = !showLines;
+    linesBtn.classList.toggle("on", showLines);
+    draw();
+  };
+
+  /* Save the frame you are looking at, lines and all. Burning the overlay into
+     the video would mean re-encoding it, which costs as long again as the clip;
+     a still is instant and is the thing worth showing someone. */
+  const saveBtn = view.querySelector("#mvsave");
+  saveBtn.onclick = async () => {
+    const was = saveBtn.textContent;
+    saveBtn.textContent = "Saving\u2026";
+    try {
+      const out = document.createElement("canvas");
+      out.width = video.videoWidth; out.height = video.videoHeight;
+      const g = out.getContext("2d");
+      g.drawImage(video, 0, 0, out.width, out.height);
+      const f = showLines ? overlayAt(spec().track(r), video.currentTime) : null;
+      if (f) {
+        const at = (p) => [p.x * out.width, p.y * out.height];
+        spec().draw(g, f, at, Math.max(4, out.width * 0.011));
+      }
+      const blob = await new Promise((res) => out.toBlob(res, "image/jpeg", 0.92));
+      const file = new File([blob], `form-${angle}-${Date.now()}.jpg`, { type: "image/jpeg" });
+      // Sharing is how a phone actually saves a picture; a download link is
+      // the desktop fallback.
+      if (navigator.canShare?.({ files: [file] })) await navigator.share({ files: [file] });
+      else {
+        const href = URL.createObjectURL(blob);
+        const a = Object.assign(document.createElement("a"), { href, download: file.name });
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(href), 4000);
+      }
+      saveBtn.textContent = "Saved";
+      setTimeout(() => { saveBtn.textContent = was; }, 1600);
+    } catch {
+      saveBtn.textContent = was;                 // a cancelled share is not an error
+    }
+  };
+
+  load(angle);
+  return () => { stop(); video.pause(); video.removeAttribute("src"); if (url) URL.revokeObjectURL(url); };
 }

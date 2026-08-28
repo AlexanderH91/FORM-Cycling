@@ -73,15 +73,16 @@ const play = await page.evaluate(async () => {
   const src = await res.text();
   return {
     hasPlayer: /function wirePlayer/.test(src),
-    called: /if \(canPlay\) wirePlayer/.test(src),
-    stripsTrack: /const \{ keyframes, track, \.\.\.stored \}/.test(src),
-    usesSharedLogic: /overlayAt\(track, video\.currentTime\)/.test(src),
+    called: /if \(canPlay\) return wirePlayer/.test(src),
+    stripsTrack: /const \{ keyframes, track, \.\.\.top \} = report;/.test(src)
+      && /front: strip\(top\.front\), rear: strip\(top\.rear\)/.test(src),
+    usesSharedLogic: /overlayAt\(spec\(\)\.track\(r\), video\.currentTime\)/.test(src),
     speeds: (src.match(/\[0\.25, 0\.5, 1\]/) || []).length === 1,
     bandColours: /#34D27B/.test(src) && /#F2C230/.test(src),
   };
 });
 T('player exists and is called from the report', play.hasPlayer && play.called, `defined=${play.hasPlayer} called=${play.called}`);
-T('track never reaches the server', play.stripsTrack, 'stripped alongside keyframes');
+T('no view\'s per-frame track reaches the server', play.stripsTrack, 'side, front and rear all stripped');
 T('player draws via the tested overlay logic', play.usesSharedLogic, 'calls overlayAt');
 T('speed control offers 0.25/0.5/1', play.speeds, '0.25, 0.5, 1');
 T('overlay uses the in-band / out-of-band colours', play.bandColours, 'green + gold');

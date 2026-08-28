@@ -36,6 +36,13 @@ const r = await page.evaluate(async () => {
   }, null);
   await new Promise((res) => setTimeout(res, 400));
 
+  /* The frame now lives behind the card's toggle, so it has to be opened
+     before it exists on screen. A lazy image inside a hidden panel never
+     loads at all — decode() on one simply never resolves, which is how this
+     suite came to hang rather than fail. */
+  for (const head of document.querySelectorAll('.mhead')) head.click();
+  await new Promise((res) => setTimeout(res, 300));
+
   const figs = [...document.querySelectorAll('.card .cardshot')];
   const imgs = figs.map((f) => f.querySelector('img'));
   const withShot = [...document.querySelectorAll('.card')].filter((el) => el.querySelector('.cardshot'));
@@ -51,7 +58,11 @@ const r = await page.evaluate(async () => {
     whyText: document.querySelector('.why')?.textContent.slice(0, 40),
     noOverflow: document.documentElement.scrollWidth <= window.innerWidth,
     // a card's still must be a real image, not a broken one
-    loaded: await Promise.all(imgs.map((i) => i.decode().then(() => true, () => false))),
+    // Bounded: a decode that never settles is a failure, not a reason to hang.
+    loaded: await Promise.all(imgs.map((i) => Promise.race([
+      i.decode().then(() => true, () => false),
+      new Promise((res) => setTimeout(() => res(false), 5000)),
+    ]))),
   };
 });
 
