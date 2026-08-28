@@ -130,7 +130,11 @@ export function kneeOverAxle(rows, fps) {
       ofFemur: mid / femur,
       sd: sd(offs) / femur,
       n: offs.length,
-      // the stroke closest to the reported figure, so the still shows it
+      /* Strokes ranked by how close each is to the reported figure, so the
+         still shows the stroke the number describes — and so a frame the model
+         read badly is not the end of it. */
+      ranked: three.map((idx, i) => ({ idx, d: Math.abs(offs[i] - mid) }))
+        .sort((a, b) => a.d - b.d).map((x) => x.idx),
       at: three[offs.reduce((b, v, i) => (Math.abs(v - mid) < Math.abs(offs[b] - mid) ? i : b), 0)],
     };
   }
@@ -344,6 +348,21 @@ async function still(video, lm, t, draw, side, maxW = 720) {
   const focus = p ? draw(ctx, side ? pickSide(p, side) : p, c.width, c.height) : false;
   const drawn = focus !== false;
   return { src: crop(c, drawn ? focus : null), drawn };
+}
+
+/* Work down the ranked frames until one produces a still with the measurement
+   actually drawn on it. Only if every attempt comes back undrawable do we
+   settle for a picture with nothing on it — and only if the clip will not give
+   a picture at all is there no still. Bounded, because each try is a seek. */
+async function bestStill(video, lm, times, draw, side, tries = 6) {
+  let fallback = null;
+  for (const t of times.slice(0, tries)) {
+    const shot = await still(video, lm, t, draw, side);
+    if (shot.fail) { fallback ??= shot; continue; }
+    if (shot.drawn) return shot;
+    fallback = shot;                       // a real frame, just nothing drawable on it
+  }
+  return fallback ?? { fail: "no frame in the clip could be read" };
 }
 
 /* A whole portrait phone frame per card turns the report into a scroll of
@@ -595,8 +614,9 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
      extreme it is, not as a typical stroke. */
   const frontStill = async (video, lm, rows) => {
     const lean = (r) => Math.max(Math.abs(r.left ?? 0), Math.abs(r.right ?? 0));
-    const worst = rows.reduce((b, r, i) => (lean(r) > lean(rows[b]) ? i : b), 0);
-    const shot = await still(video, lm, rows[worst].t, (ctx, p, w, h) => {
+    const ranked = rows.map((_, i) => i).sort((a, b) => lean(rows[b]) - lean(rows[a]));
+    const worst = ranked[0];
+    const shot = await bestStill(video, lm, ranked.map((i) => rows[i].t), (ctx, p, w, h) => {
       const seen = (i) => SEEN(p[i]);
       const pairs = [[25, 27], [26, 28]].filter(([k, a]) => seen(k) && seen(a));
       if (!pairs.length) return false;
@@ -664,8 +684,9 @@ export async function analyzeRearClip(blob, trim, onProgress) {
   // From behind, the frame that matters is the most tilted one.
   const rearStill = async (video, lm, rows) => {
     const tilt = (r) => Math.abs(r.pelvis ?? r.shoulder ?? 0);
-    const worst = rows.reduce((b, r, i) => (tilt(r) > tilt(rows[b]) ? i : b), 0);
-    const shot = await still(video, lm, rows[worst].t, (ctx, p, w, h) => {
+    const ranked = rows.map((_, i) => i).sort((a, b) => tilt(rows[b]) - tilt(rows[a]));
+    const worst = ranked[0];
+    const shot = await bestStill(video, lm, ranked.map((i) => rows[i].t), (ctx, p, w, h) => {
       const pairs = [[11, 12], [23, 24]].filter(([a, b]) => SEEN(p[a]) && SEEN(p[b]));
       if (!pairs.length) return false;
       for (const [a, b] of pairs) {
@@ -999,14 +1020,21 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      MediaRecorder file is the slow part. */
   onProgress(95, "Pulling the frame behind each number…");
 
-  const closestTo = (idxs, key, target) =>
-    idxs.reduce((best, i) => (Math.abs(rows[i][key] - target) < Math.abs(rows[best][key] - target) ? i : best), idxs[0]);
+  /* Candidates, not a candidate.
+     A clip holds sixty to a hundred and twenty sampled frames. Choosing the
+     single most representative one and giving up if the model happened not to
+     see a joint clearly in that exact frame is indefensible — the next frame
+     along is a fortieth of a second away and shows the same thing. These are
+     ranked best-first and tried in order until one draws. */
+  const rankedBy = (idxs, key, target) =>
+    [...idxs].sort((a, b) => Math.abs(rows[a][key] - target) - Math.abs(rows[b][key] - target));
 
   const kneeColour = pooledVerdict === "ok" ? IN_BAND : OUT_OF_BAND;
-  const kneeRow = closestTo(bdcM, "kneeBend", kneeBDC.value);
+  const kneeRanked = rankedBy(bdcM, "kneeBend", kneeBDC.value);
+  const kneeRow = kneeRanked[0];
   const specs = [
     {
-      key: "knee", row: kneeRow,
+      key: "knee", row: kneeRow, tries: kneeRanked,
       caption: `Knee ${rows[kneeRow].kneeBend.toFixed(0)}\u00b0 on this stroke. The card's ${k}\u00b0 is the middle of ${kneeBDC.n} strokes like it.`,
       draw: (ctx, j, w, h) => {
         if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
@@ -1018,10 +1046,11 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   ];
 
   if (toeBDC) {
-    const toeRow = closestTo(bdcM, "toeDown", toeBDC.value);
+    const toeRanked = rankedBy(bdcM, "toeDown", toeBDC.value);
+    const toeRow = toeRanked[0];
     const toeColour = toeVerdict === "ok" ? IN_BAND : OUT_OF_BAND;
     specs.push({
-      key: "foot", row: toeRow,
+      key: "foot", row: toeRow, tries: toeRanked,
       caption: `Your foot at the bottom of this stroke, ${rows[toeRow].toeDown.toFixed(0)}\u00b0 toe-down. The dashed line is level.`,
       draw: (ctx, j, w, h) => {
         if (!SEEN(j.heel) || !SEEN(j.toe)) return false;
@@ -1035,10 +1064,11 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   }
 
   if (hipTDC && tdcIdx.length) {
-    const tdcRow = closestTo(tdcIdx, "hip", hipTDC.value);
+    const tdcRanked = rankedBy(tdcIdx, "hip", hipTDC.value);
+    const tdcRow = tdcRanked[0];
     const hipColour = verdictFor(hipTDC, BANDS.hipTDC) === "ok" ? IN_BAND : OUT_OF_BAND;
     specs.push({
-      key: "hip", row: tdcRow,
+      key: "hip", row: tdcRow, tries: tdcRanked,
       caption: `The top of this stroke, where your hip is most closed — ${rows[tdcRow].hip.toFixed(0)}\u00b0 between torso and thigh.`,
       draw: (ctx, j, w, h) => {
         if (!SEEN(j.sho) || !SEEN(j.hip) || !SEEN(j.knee)) return false;
@@ -1051,9 +1081,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
 
   {
     // Mid-stroke, where the torso is doing what it does for most of the ride.
-    const torsoRow = closestTo(rows.map((_, i) => i), "torso", torso.value);
+    const torsoRanked = rankedBy(rows.map((_, i) => i), "torso", torso.value);
+    const torsoRow = torsoRanked[0];
     specs.push({
-      key: "torso", row: torsoRow,
+      key: "torso", row: torsoRow, tries: torsoRanked,
       caption: `Your back and hips at this moment, ${rows[torsoRow].torso.toFixed(0)}\u00b0 above horizontal. The dashed line is level.`,
       draw: (ctx, j, w, h) => {
         if (!SEEN(j.sho) || !SEEN(j.hip)) return false;
@@ -1067,7 +1098,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
 
   if (foreaft?.at != null) {
     specs.push({
-      key: "foreaft", row: foreaft.at,
+      key: "foreaft", row: foreaft.at, tries: foreaft.ranked ?? [foreaft.at],
       caption: "Cranks level. The dashed line drops straight down from your knee; the dot is where the pedal axle sits under the ball of your foot.",
       draw: (ctx, j, w, h) => {
         if (!SEEN(j.knee) || !SEEN(j.heel) || !SEEN(j.toe)) return false;
@@ -1093,7 +1124,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       const order = [...specs].sort((a, b) => rows[a.row].t - rows[b.row].t);
       for (let n = 0; n < order.length; n++) {
         const spec = order[n];
-        const shot = await still(video, lm, rows[spec.row].t, spec.draw, side);
+        const shot = await bestStill(video, lm, (spec.tries ?? [spec.row]).map((i) => rows[i].t), spec.draw, side);
         if (shot.fail) stillsFail ??= shot.fail;
         else shots.set(spec.key, { ...shot, caption: spec.caption });
         onProgress(95 + (4 * (n + 1)) / order.length);
