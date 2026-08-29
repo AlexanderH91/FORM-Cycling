@@ -1,4 +1,4 @@
-import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FINE_MODEL_TIMEOUT_MS, SUBFRAME,
+import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FINE_MODEL_TIMEOUT_MS, SUBFRAME, SANITY,
          FEMUR_OVER_HEIGHT, AXLE_ALONG_FOOT } from "./config.js";
 
 /* On-device side-view analysis.
@@ -31,7 +31,13 @@ async function makeLandmarker(model, runningMode) {
 const cache = new Map();
 const landmarker = (model, mode) => {
   const key = `${model}:${mode}`;
-  if (!cache.has(key)) cache.set(key, makeLandmarker(model, mode));
+  if (!cache.has(key)) {
+    /* Drop a failed load from the cache. A rejected promise left in here was
+       permanent: one bad download and every analysis for the rest of the
+       session skipped the accurate model instantly, with no second attempt. */
+    const p = makeLandmarker(model, mode).catch((e) => { cache.delete(key); throw e; });
+    cache.set(key, p);
+  }
   return cache.get(key);
 };
 
@@ -567,7 +573,21 @@ function fromVertical(top, bottom, inwardIsPositive) {
   return inwardIsPositive ? a : -a;
 }
 
-const amplitude = (a) => Math.max(...a) - Math.min(...a);
+const pct = (a, q) => {
+  const s = [...a].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.max(0, Math.round(q * (s.length - 1))))];
+};
+
+/* How far a thing swings, measured so that one bad frame cannot define it.
+   max minus min is the least robust statistic there is — it is computed
+   ENTIRELY from the two most extreme readings in the clip, so a single frame
+   where the model mislabels a joint sets the answer by itself. That is how a
+   pelvis came to be reported as rocking 127 degrees. The 10th-to-90th
+   percentile spread says the same thing about the rider and nothing about the
+   worst two frames. */
+const amplitude = (a) => (a.length < 8
+  ? Math.max(...a) - Math.min(...a)
+  : pct(a, 0.9) - pct(a, 0.1));
 
 /* Which pose to draw at a given moment of playback, if any.
    Returns null when the nearest analysed frame is too far away — the model
@@ -649,9 +669,18 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
        the stroke — and one measured leg is still worth saying. */
     const vis = (i) => (p[i].visibility ?? 1) >= CAPTURE.minJointVisibility;
     const row = { vis: mean([25, 26, 27, 28].map((i) => p[i].visibility ?? 1)) };
-    // Rider faces the camera: their left is on our right, so inward flips.
-    if (vis(25) && vis(27)) row.left = fromVertical(sq(p[25]), sq(p[27]), true);
-    if (vis(26) && vis(28)) row.right = fromVertical(sq(p[26]), sq(p[28]), false);
+    /* Which leg is which, decided by screen position rather than by the
+       model's own left/right labels — facing the camera it swaps those
+       readily, and a swap moves one leg's lean into the other leg's series.
+       A rider faces us, so the leg on the left of frame is their right. */
+    const legs = [[25, 27], [26, 28]].filter(([k, a]) => vis(k) && vis(a));
+    if (legs.length === 2 && sq(p[legs[0][0]]).x > sq(p[legs[1][0]]).x) legs.reverse();
+    for (const [n, [k, a]] of legs.entries()) {
+      // screen-left leg first: that is the rider's right
+      const onScreenLeft = legs.length === 2 ? n === 0 : sq(p[k]).x < 0.5;
+      const lean = fromVertical(sq(p[k]), sq(p[a]), !onScreenLeft);
+      row[onScreenLeft ? "right" : "left"] = lean;
+    }
     if (row.left == null && row.right == null) return null;
     /* Raw image coordinates travel with the row so the report can replay this
        clip with the same lines drawn on it. Without them, switching the player
@@ -671,10 +700,15 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
   if (leftVals.length < MIN && rightVals.length < MIN)
     return { gate: "We couldn't hold either knee in view for long enough from the front. Frame both legs from the waist down, with the light in front of you, and film again.", seen };
 
+  /* A reading past the ceiling is a failed read, not a finding. */
+  const sane = (v, max) => (Number.isFinite(v) && Math.abs(v) <= max ? v : null);
+
   const out = { seen, kneeTravel: {}, trim, stills: rows.stills ?? null,
                 track: rows.filter((r) => r.j).map((r) => ({ t: r.t, j: r.j, left: r.left, right: r.right })) };
-  if (leftVals.length >= MIN) out.kneeTravel.left = +amplitude(leftVals).toFixed(1);
-  if (rightVals.length >= MIN) out.kneeTravel.right = +amplitude(rightVals).toFixed(1);
+  if (leftVals.length >= MIN) out.kneeTravel.left = sane(+amplitude(leftVals).toFixed(1), SANITY.kneeTravelDeg);
+  if (rightVals.length >= MIN) out.kneeTravel.right = sane(+amplitude(rightVals).toFixed(1), SANITY.kneeTravelDeg);
+  if (out.kneeTravel.left == null && out.kneeTravel.right == null)
+    return { gate: "We found your knees from the front but the readings came back impossible — more side-to-side travel than a knee has. That is the model losing track of which leg is which, usually from a dim or busy background. Film with the light in front of you and nothing moving behind.", seen };
   const { left, right } = out.kneeTravel;
   if (left != null && right != null) {
     const bigger = Math.max(left, right), smaller = Math.min(left, right);
@@ -716,7 +750,16 @@ export async function analyzeRearClip(blob, trim, onProgress) {
     // Shoulder line and hip line stand alone — a jersey hides hips far more
     // often than shoulders, and shoulder rock on its own is still a finding.
     const vis = (i) => (p[i].visibility ?? 1) >= CAPTURE.minJointVisibility;
-    const tilt = (a, b) => deg(Math.atan2(sq(b).y - sq(a).y, Math.abs(sq(b).x - sq(a).x) + 1e-9));
+    /* Order the pair by where they sit on screen, not by which one the model
+       labelled "left". Seen from behind there is no face to anchor that
+       decision, so the model flips the two constantly — and every flip
+       inverted the sign of this angle. A shoulder line reported as rocking
+       171 degrees is not a rider, it is a label swap. */
+    const tilt = (a, b) => {
+      const A = sq(a), B = sq(b);
+      const [l, r] = A.x <= B.x ? [A, B] : [B, A];
+      return deg(Math.atan2(r.y - l.y, Math.abs(r.x - l.x) + 1e-9));
+    };
     const row = { vis: mean([11, 12, 23, 24].map((i) => p[i].visibility ?? 1)) };
     if (vis(11) && vis(12)) row.shoulder = tilt(p[11], p[12]);
     if (vis(23) && vis(24)) row.pelvis = tilt(p[23], p[24]);
@@ -735,10 +778,13 @@ export async function analyzeRearClip(blob, trim, onProgress) {
   if (sh.length < MIN && pv.length < MIN)
     return { gate: "We couldn't hold your shoulders or hips in view for long enough from behind. Stand the phone behind the rear wheel with light from the side, and film again.", seen };
 
+  const sane = (v, max) => (Number.isFinite(v) && Math.abs(v) <= max ? v : null);
   const out = { seen, trim, stills: rows.stills ?? null,
                 track: rows.filter((r) => r.j).map((r) => ({ t: r.t, j: r.j, shoulder: r.shoulder, pelvis: r.pelvis })) };
-  if (sh.length >= MIN) out.shoulderRock = +amplitude(sh).toFixed(1);
-  if (pv.length >= MIN) out.pelvicRock = +amplitude(pv).toFixed(1);
+  if (sh.length >= MIN) out.shoulderRock = sane(+amplitude(sh).toFixed(1), SANITY.rockDeg);
+  if (pv.length >= MIN) out.pelvicRock = sane(+amplitude(pv).toFixed(1), SANITY.rockDeg);
+  if (out.shoulderRock == null && out.pelvicRock == null)
+    return { gate: "We found you from behind but the readings came back impossible — more tilt than a body makes. From behind there is no face to tell the model which side is which, and it swapped them. Stand the phone square behind the wheel with the light from the side.", seen };
   return out;
 }
 

@@ -4,8 +4,8 @@
    page, which revalidates far more aggressively. The version badge shows both,
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
-export const VERSION = "v14";
-export const BUILD = "2026-08-29-v14";
+export const VERSION = "v15";
+export const BUILD = "2026-08-29-v15";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -124,6 +124,17 @@ export const SUBFRAME = { steps: 2, divisor: 3 };
    this has to allow for a bad connection — but not indefinitely, because an
    analysis that hangs is worse than one that is slightly less precise. */
 export const FINE_MODEL_TIMEOUT_MS = 45_000;
+
+/* Ceilings past which a figure is not a rider, it is a broken read.
+   A knee does not swing 70 degrees out of vertical and a pelvis does not tilt
+   127 — both of which this app printed on a card, with a straight face,
+   because nothing checked. These are not coaching bands and no verdict is
+   given against them: they are the line past which FORM says it could not
+   measure rather than reporting a number it cannot possibly mean. */
+export const SANITY = {
+  kneeTravelDeg: 30,     // side-to-side knee travel across a stroke
+  rockDeg: 25,           // shoulder or pelvis tilt from level
+};
 
 export const MAX_RECORD_MS = 10 * 60 * 1000; // 10 minutes
 
