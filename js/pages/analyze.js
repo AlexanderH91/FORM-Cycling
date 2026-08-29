@@ -420,8 +420,9 @@ function addExtraViewCards(r) {
       note: (both
         ? "How far each knee swings in and out over a stroke, measured against straight up from the ankle."
         : `Only your ${f.oneLegOnly} knee stayed in view long enough to measure. This is how far it swings in and out over a stroke.`)
-        + " There is no good published range to hold this against, so we will not score it — but the two sides can be compared with each other, which is the card below."
-        + (hidden ? ` For ${hidden}% of the stroke a knee was behind the bars or your own arm. We worked out where it was from your hip, your ankle and the length of your own thigh and shin, measured off the part of the ride where the leg was in clear view.` : ""),
+        + " There is no good published range to hold this against, so we will not score it."
+        + (f.asymmetry ? " Your two sides can still be compared with each other, which is the card below." : "")
+        + (hidden ? ` In ${hidden}% of the readings a knee was behind the bars or your own arm. We worked out where it was from your hip, your ankle and the length of your own thigh and shin, measured off the part of the ride where the leg was in clear view.` : ""),
     });
     if (f.asymmetry) {
       const even = f.asymmetry < 1.35;

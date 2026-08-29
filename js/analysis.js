@@ -1113,7 +1113,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   const ay = rows.map((r) => r.ankleY);
   const bdc = findPeaks(ay, FPS * 0.45, 0.25);
   const tdcIdx = findPeaks(ay.map((v) => -v), FPS * 0.45, 0.25);
-  if (bdc.length < 5) { release(); return { gate: "We couldn't find steady pedaling in the part you selected. Move the trim to a section where you ride continuously.", capture }; }
+  if (bdc.length < 5) { release(); return { gate: "We couldn't find steady pedalling in the part you selected. Move the trim to a section where you ride continuously.", capture }; }
 
   /* Only now is it known which frames matter, which is the whole point: the
      accurate model is spent on those and nothing else. */
@@ -1237,7 +1237,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       title: "Film it the same way twice",
       line: `Your knee has read anywhere from ${pooled.lo.toFixed(0)}° to ${pooled.hi.toFixed(0)}° across ${pooled.rides} rides — a spread wider than the whole ${kLo}–${kHi}° window we are trying to place you in. Your saddle did not move by that much, so what is moving is the camera.`,
       cue: "Same spot every time: phone at saddle height, straight out to the side rather than at an angle, whole bike in frame. Then trim to a stretch where you are already pedalling steadily, not starting or easing off.",
-      why: "This is worth ten minutes because everything else waits on it. Saddle height is the setting the rest of a fit is built on — get two rides that agree and FORM can tell you which way to move it and by how much. Until then any number it gave you would be a coin flip dressed up as advice.",
+      why: "This is worth ten minutes because everything else waits on it. Saddle height is the setting the rest of a fit is built on — get two rides that agree and we can tell you which way to move it and by how much. Until then any number we gave you would be a coin flip dressed up as advice.",
     };
   else if (pooled.settled && pooledVerdict === "borderline" && edgeSide)
     fix = {
@@ -1266,7 +1266,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     fix = {
       title: "Too close to call — one more read",
       line: `Your knee bends ${k}° at the bottom, and riders sit between ${kLo}° and ${kHi}°. Over ${kneeBDC.n} strokes we can place you to about ${kU.toFixed(1)}° either way — which still reaches across the edge, so we cannot honestly call it.`,
-      cue: `Ride ${pooled.rides} of ${SETTLE_RIDES}. Film again in the same spot — FORM pools your rides, and how closely they agree is what settles it.`,
+      cue: `Ride ${pooled.rides} of ${SETTLE_RIDES}. Film again in the same spot — we add your rides together, and how closely they agree is what settles it.`,
       why: "Moving a saddle on a reading this close is guesswork, and guesswork on saddle height is how people end up chasing knee pain around the bike. One more ride costs ten minutes and settles it.",
     };
   else if (toeBDC && toeVerdict === "high" && toeBDC.value > BANDS.footToeDown6[1] + 3)
@@ -1274,7 +1274,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       title: "Very toe-down at the bottom",
       line: `Your foot points ${toeBDC.value.toFixed(0)}° down at the bottom of the stroke, where most riders are between ${BANDS.footToeDown6[0]}° and ${BANDS.footToeDown6[1]}°.`,
       cue: "Think about dropping your heel through the bottom of the stroke — like scraping mud off the shoe.",
-      why: "Pointing the toe hard at the bottom does the work with the calf instead of the big muscles above the knee, which is a smaller engine that tires sooner. It also reads as a saddle slightly too high, so it is worth settling alongside the number above.",
+      why: "Pointing the toe hard at the bottom does the work with the calf instead of the big muscles above the knee, and the calf is a much smaller engine that tires sooner. It also reads as a saddle slightly too high, so it is worth settling alongside the number above.",
     };
   else
     fix = {
@@ -1502,16 +1502,16 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
          edge" up top and "Close" down here is telling two stories about one
          joint. */
       { name: "Knee at 6 o'clock", value: k + "°", shot: shots.get("knee"),
-        means: "This one setting decides where your power comes from. Straighten too far and you reach for the bottom of the stroke, so the hips rock and the load slides onto the back of the knee. Stay too folded and you never get through the strongest part of the push. Somewhere in between, the leg works where it is strongest, and long rides stop aching in the same place.",
+        means: "This one setting decides where your power comes from. Straighten too far and you reach for the bottom of the stroke, so the hips rock and the load slides onto the back of the knee. Stay too folded and you never get through the strongest part of the push. Between those two the leg works where it is strongest, and long rides stop aching in the same place.",
         verdict: pooled.settled && pooledVerdict === "borderline" ? "At edge" : word(pooledVerdict),
-        note: `Riders sit between ${kLo}° and ${kHi}° at the bottom of the stroke, and where you land in that is what tells you whether the saddle is at the right height. Your own strokes varied by ${kSd}° either way; across the ${kneeBDC.n} we could read clearly${kneeBDC.n < kneeBDC.of ? ` of ${kneeBDC.of}` : ""} this ride comes out at ${k}°, give or take ${kU.toFixed(1)}°.${
+        note: `Riders sit between ${kLo}° and ${kHi}° at the bottom of the stroke, and where you land in that is what tells you whether the saddle is at the right height. Your own strokes varied by ${kSd}° either way, and across the ${kneeBDC.n} ${kneeBDC.n < kneeBDC.of ? `of ${kneeBDC.of} strokes we could read clearly` : "strokes we could read clearly"}, this ride comes out at ${k}°, give or take ${kU.toFixed(1)}°.${
           pooled.rides > 1 ? ` Counting your previous ${pooled.rides - 1} ride${pooled.rides > 2 ? "s" : ""} too: ${pv}°, give or take ${pooled.u.toFixed(1)}°.` : ""}` },
       ...(toeBDC ? [{ name: "Foot at 6 o'clock", shot: shots.get("foot"),
         means: "Pointing the toe hard at the bottom hands the work to your calf — a far smaller muscle than the ones above the knee, and the first to go on a long climb. A flatter foot lets the quad and glute finish the stroke instead.", value: toeBDC.value.toFixed(0) + "° toe-down", verdict: word(toeVerdict),
         note: `Most riders come through the bottom between ${BANDS.footToeDown6[0]}° and ${BANDS.footToeDown6[1]}° toe-down. Yours moved by ${toeBDC.sd.toFixed(1)}° either way from stroke to stroke.` }] : []),
       ...(hipTDC ? [{ name: "Hip fold at the top", shot: shots.get("hip"),
-        means: "How closed you are at the top of each stroke. Too closed and the top of the circle gets blocked — riders feel it as a catch, or as not being able to get low on the bars without losing power. It opens up through saddle setback and bar height, not by trying harder.", value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
-        note: `Fitters work to ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° here — the open end if you are flexible, the closed end if you are not. Yours moved by ${hipTDC.sd.toFixed(1)}° either way from stroke to stroke.` }] : []),
+        means: "How far you are folded shut at the top of each stroke, where your thigh comes up to meet your torso. Fold too far and your hip runs out of room before the pedal reaches the top, so the stroke stalls there instead of carrying through — riders feel it as a catch, or as not being able to get low on the bars without the power falling away. It opens up through saddle setback and bar height, not by trying harder.", value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
+        note: `Fitters work to ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° here. Where in that a particular rider should sit comes down to how much movement they have in the hips and lower back, which is not something we can see from the video. Yours moved by ${hipTDC.sd.toFixed(1)}° either way from stroke to stroke.` }] : []),
       /* Reported as a position, never as a verdict: knee-over-axle is where
          fitters START, not where riders should end up, and the two assumptions
          under the centimetre figure are named rather than hidden. */
@@ -1521,13 +1521,13 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
         value: foreaft.cm != null
           ? `${foreaft.cm > 0 ? "+" : ""}${foreaft.cm.toFixed(1)} cm`
           : `${foreaft.ofFemur > 0 ? "+" : ""}${(foreaft.ofFemur * 100).toFixed(0)}% of thigh`,
-        note: `Plus means your knee is ahead of the pedal spindle with the cranks level. Fitters usually start with the two roughly stacked and then move the saddle to suit the rider, so this is a starting point rather than something to hit — we do not score it. Measured over ${foreaft.n} strokes.${
+        note: `A plus sign means your knee is ahead of the pedal axle with the cranks level. Fitters usually start with the two roughly stacked and then move the saddle to suit the rider, so this is a starting point rather than something to hit — we do not score it. Measured over ${foreaft.n} strokes.${
           foreaft.cm != null
-            ? " The centimetres are close rather than exact: they come from your height and from where the pedal spindle normally sits under a foot, neither of which we can see in the video."
+            ? " The centimetres are close rather than exact: they come from your height and from where the pedal axle normally sits under a foot, neither of which we can see in the video."
             : " Add your height on the Me screen to see this in centimetres."}`,
       }] : []),
       { name: "Cadence", value: cadence.toFixed(0) + " rpm",
-        means: "Spinning faster shifts the effort off your legs and onto your heart and lungs; grinding does the opposite. Neither is wrong — but a long way from your natural cadence costs you late in a ride, when whichever system is carrying it starts to fade.", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Experienced riders mostly settle between ${BANDS.cadence[0]} and ${BANDS.cadence[1]} rpm. Below that you are pushing harder on each stroke; above it you are asking more of your breathing.` },
+        means: "Spinning faster shifts the effort off your legs and onto your heart and lungs; grinding does the opposite. Neither is wrong — but a long way from your natural cadence costs you late in a ride, when whichever system is carrying it starts to fade.", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Experienced riders mostly settle between ${BANDS.cadence[0]} and ${BANDS.cadence[1]} rpm. Below that you are pushing harder on each stroke; above it your heart and lungs are carrying more of it.` },
       { name: "Torso angle", value: torso.value.toFixed(0) + "°", shot: shots.get("torso"),
         means: "Folding lower puts less of you in the wind, and on the flat pushing air out of the way is where nearly all of your effort ends up going. But a low back asks more of your hip flexors to hold, and squeezes the room your lungs have to work in. The right answer is the lowest you can hold without shifting about, because a position you keep climbing out of is slower than a higher one you can stay in all day.", note: "Measured up from horizontal, so a smaller number is a flatter back. What flattening out is actually worth to you depends on how fast you are going — most of it at speed on the flat, almost none of it grinding up a climb." },
     ]),

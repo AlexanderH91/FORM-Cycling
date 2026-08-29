@@ -22,26 +22,37 @@ const found = await page.evaluate(async () => {
     'js/pages/analyze.js': await (await fetch('/js/pages/analyze.js')).text(),
   };
 
-  /* Read the string literal that follows `key:` — quoted or templated, with
-     escapes and ${...} handled, so nothing is missed or truncated. */
+  /* Every string literal in the value of `key:`, not just the first one.
+     The first version of this stopped at the opening quote and skipped any
+     card whose text is assembled — `note: (both ? "a" : `b`) + "c"` — which
+     is most of the front and rear cards, so the copy that most needed
+     checking was the copy going unchecked. Walk to the end of the property
+     instead, collecting literals as they come. */
   const strings = (src, key) => {
     const out = [];
     const re = new RegExp(`\\b${key}:\\s*`, 'g');
     let m;
     while ((m = re.exec(src))) {
-      let i = m.index + m[0].length;
-      const q = src[i];
-      if (q !== '"' && q !== '`' && q !== "'") continue;   // a variable, not a literal
-      let buf = '', depth = 0;
-      for (i++; i < src.length; i++) {
+      let i = m.index + m[0].length, depth = 0;
+      for (; i < src.length; i++) {
         const ch = src[i];
-        if (ch === '\\') { buf += src[i + 1]; i++; continue; }
-        if (q === '`' && ch === '$' && src[i + 1] === '{') { depth++; i++; continue; }
-        if (depth) { if (ch === '}') depth--; continue; }
-        if (ch === q) break;
-        buf += ch;
+        if (depth === 0 && (ch === ',' || ch === '}' || ch === ';')) break;   // end of value
+        if ('([{'.includes(ch)) { depth++; continue; }
+        if (')]}'.includes(ch)) { depth--; continue; }
+        if (ch !== '"' && ch !== '`' && ch !== "'") continue;
+        const q = ch;
+        let buf = '', tpl = 0;
+        for (i++; i < src.length; i++) {
+          const c = src[i];
+          if (c === '\\') { buf += c + src[i + 1]; i++; continue; }
+          if (q === '`' && c === '$' && src[i + 1] === '{') { tpl++; i++; continue; }
+          if (tpl) { if (c === '}') tpl--; else if (c === '{') tpl++; continue; }
+          if (c === q) break;
+          buf += c;
+        }
+        const text = buf.replace(/\s+/g, ' ').trim();
+        if (text) out.push(text);
       }
-      out.push(buf.replace(/\s+/g, ' ').trim());
     }
     return out;
   };
@@ -52,7 +63,7 @@ const found = await page.evaluate(async () => {
   const all = [];
   for (const [file, src] of Object.entries(files))
     for (const key of ['means', 'note', 'caption', 'title', 'line', 'cue', 'why', 'gate'])
-      for (const text of strings(src, key)) if (text) all.push({ file, key, text });
+      for (const text of strings(src, key)) all.push({ file, key, text });
   return all;
 });
 
@@ -81,7 +92,7 @@ for (const s of found)
     if (re.test(s.text)) offenders.push(`${s.file} ${s.key}: "${s.text.match(re)[0]}" — ${why}`);
 
 const count = (k) => found.filter((s) => s.key === k).length;
-T('there is card copy to check', found.length >= 40,
+T('there is card copy to check', found.length >= 60,
   `${count('means')} meanings, ${count('note')} notes, ${count('caption')} captions, ${found.length - count('means') - count('note') - count('caption')} lines of the fix and the refusals`);
 T('no card speaks our language instead of the rider\'s', offenders.length === 0,
   offenders.slice(0, 4).join(' | ') || 'nothing to translate');
