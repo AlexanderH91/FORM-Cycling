@@ -838,7 +838,7 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
   if (leftVals.length >= MIN) out.kneeTravel.left = sane(+amplitude(leftVals).toFixed(1), SANITY.kneeTravelDeg);
   if (rightVals.length >= MIN) out.kneeTravel.right = sane(+amplitude(rightVals).toFixed(1), SANITY.kneeTravelDeg);
   if (out.kneeTravel.left == null && out.kneeTravel.right == null)
-    return { gate: "We found your knees from the front but the readings came back impossible — more side-to-side travel than a knee has. That is the model losing track of which leg is which, usually from a dim or busy background. Film with the light in front of you and nothing moving behind.", seen };
+    return { gate: "We found your knees from the front but the readings came back impossible — more side-to-side travel than a knee has. That happens when we cannot keep your two legs apart, usually because the background is dim or busy. Film with the light in front of you and nothing moving behind.", seen };
   const { left, right } = out.kneeTravel;
   if (left != null && right != null) {
     const bigger = Math.max(left, right), smaller = Math.min(left, right);
@@ -932,7 +932,7 @@ export async function analyzeRearClip(blob, trim, onProgress) {
   if (sh.length >= MIN) out.shoulderRock = sane(+amplitude(sh).toFixed(1), SANITY.rockDeg);
   if (pv.length >= MIN) out.pelvicRock = sane(+amplitude(pv).toFixed(1), SANITY.rockDeg);
   if (out.shoulderRock == null && out.pelvicRock == null)
-    return { gate: "We found you from behind but the readings came back impossible — more tilt than a body makes. From behind there is no face to tell the model which side is which, and it swapped them. Stand the phone square behind the wheel with the light from the side.", seen };
+    return { gate: "We found you from behind but the readings came back impossible — more tilt than a body makes. From behind there is no face to say which side is which, and the two got swapped. Stand the phone square behind the wheel with the light from the side.", seen };
   return out;
 }
 
@@ -1218,8 +1218,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      would that get me?" — a number and a millimetre count on their own are a
      measurement, not coaching. */
   const consequence = tooStraight
-    ? "A leg that straightens too far at the bottom makes you reach for the pedal, so the hips rock side to side to follow it and the load shifts onto the back of the knee and the hamstring. Riders who bring the saddle down into the band usually notice steadier hips on long efforts and less ache behind the knee afterwards."
-    : "A knee still folded at the bottom never gets through its strongest part of the push, and the load sits on the front of the knee. Riders who bring the saddle up into the band usually find the pedal stroke feels less cramped and they can hold a bigger gear at the same effort.";
+    ? "A leg that straightens too far at the bottom makes you reach for the pedal, so the hips rock side to side to follow it and the load shifts onto the back of the knee and the hamstring. Riders who bring the saddle down into that range usually notice steadier hips on long efforts and less ache behind the knee afterwards."
+    : "A knee still folded at the bottom never gets through its strongest part of the push, and the load sits on the front of the knee. Riders who bring the saddle up into that range usually find the pedal stroke feels less cramped and they can hold a bigger gear at the same effort.";
 
   /* Rides only "agree" if they all land on the same side of the band. Reads
      spanning 28° to 39° are not a rider who sits consistently below it — they
@@ -1235,51 +1235,51 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   if (pooled.settled && !sameSide && spread > kHi - kLo)
     fix = {
       title: "Film it the same way twice",
-      line: `Your knee has read anywhere from ${pooled.lo.toFixed(0)}° to ${pooled.hi.toFixed(0)}° across ${pooled.rides} rides — a spread wider than the whole ${kLo}–${kHi}° band. Your saddle did not move by that much, so what is moving is the camera.`,
+      line: `Your knee has read anywhere from ${pooled.lo.toFixed(0)}° to ${pooled.hi.toFixed(0)}° across ${pooled.rides} rides — a spread wider than the whole ${kLo}–${kHi}° window we are trying to place you in. Your saddle did not move by that much, so what is moving is the camera.`,
       cue: "Same spot every time: phone at saddle height, straight out to the side rather than at an angle, whole bike in frame. Then trim to a stretch where you are already pedalling steadily, not starting or easing off.",
       why: "This is worth ten minutes because everything else waits on it. Saddle height is the setting the rest of a fit is built on — get two rides that agree and FORM can tell you which way to move it and by how much. Until then any number it gave you would be a coin flip dressed up as advice.",
     };
   else if (pooled.settled && pooledVerdict === "borderline" && edgeSide)
     fix = {
       title: tooStraight ? "You ride at the bottom edge" : "You ride at the top edge",
-      line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom, every one of them between ${pooled.lo.toFixed(0)}° and ${pooled.hi.toFixed(0)}°. The band runs ${kLo}–${kHi}°, so you sit just ${edgeSide} it — consistently. That agreement across separate days and separate camera setups is the evidence; no single ride could give it.`,
+      line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom, every one of them between ${pooled.lo.toFixed(0)}° and ${pooled.hi.toFixed(0)}°. Riders sit between ${kLo}° and ${kHi}°, so you are just ${edgeSide} that — consistently. That agreement across separate days and separate camera setups is the evidence; no single ride could give it.`,
       cue: tooStraight
-        ? "Two to three millimetres down would put you inside the band — about a third of the width of the marks on a seatpost."
-        : "Two to three millimetres up would put you inside the band — about a third of the width of the marks on a seatpost.",
-      why: `At this distance from the band the effect is small and comfort should decide it. ${consequence} If nothing aches and the power feels good where you are, this is a fine place to ride.`,
+        ? "Two to three millimetres down would bring you inside — about a third of the width of the marks on a seatpost."
+        : "Two to three millimetres up would bring you inside — about a third of the width of the marks on a seatpost.",
+      why: `This close to the edge the difference is small and comfort should decide it. ${consequence} If nothing aches and the power feels good where you are, this is a fine place to ride.`,
     };
   else if (pooled.settled && pooledVerdict === "ok")
     fix = {
       title: "Saddle height holds up",
-      line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom, inside the ${kLo}–${kHi}° band every time.`,
+      line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom, inside the usual ${kLo}–${kHi}° every time.`,
       cue: "Nothing to change here. Film again after any change to the bike or the shoes.",
       why: "Saddle height is the setting the rest of a fit is built on, so having it settled means the next thing worth looking at is how your knees track — which is the front view.",
     };
   else if (pooledVerdict === "low" || pooledVerdict === "high")
     fix = {
       title: tooStraight ? "Saddle looks high" : "Saddle looks low",
-      line: `Your knee ${tooStraight ? "only bends" : "stays bent"} ${pv}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""} — the band runs ${kLo}–${kHi}°, and that gap is bigger than the margin of error on the read (±${pooled.u.toFixed(1)}°).`,
+      line: `Your knee ${tooStraight ? "only bends" : "stays bent"} ${pv}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""} — riders sit between ${kLo}° and ${kHi}°, and that gap is wider than the amount we could be out by (${pooled.u.toFixed(1)}°).`,
       cue: saddleMove("5 mm"),
       why: consequence,
     };
   else if (pooledVerdict === "borderline")
     fix = {
       title: "Too close to call — one more read",
-      line: `Your knee bends ${k}° at the bottom and the band runs ${kLo}–${kHi}°. Averaged over ${kneeBDC.n} strokes that centre is good to about ±${kU.toFixed(1)}°, which still reaches across the edge of the band.`,
+      line: `Your knee bends ${k}° at the bottom, and riders sit between ${kLo}° and ${kHi}°. Over ${kneeBDC.n} strokes we can place you to about ${kU.toFixed(1)}° either way — which still reaches across the edge, so we cannot honestly call it.`,
       cue: `Ride ${pooled.rides} of ${SETTLE_RIDES}. Film again in the same spot — FORM pools your rides, and how closely they agree is what settles it.`,
       why: "Moving a saddle on a reading this close is guesswork, and guesswork on saddle height is how people end up chasing knee pain around the bike. One more ride costs ten minutes and settles it.",
     };
   else if (toeBDC && toeVerdict === "high" && toeBDC.value > BANDS.footToeDown6[1] + 3)
     fix = {
       title: "Very toe-down at the bottom",
-      line: `Your foot points ${toeBDC.value.toFixed(0)}° down at the bottom of the stroke (band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}°).`,
+      line: `Your foot points ${toeBDC.value.toFixed(0)}° down at the bottom of the stroke, where most riders are between ${BANDS.footToeDown6[0]}° and ${BANDS.footToeDown6[1]}°.`,
       cue: "Think about dropping your heel through the bottom of the stroke — like scraping mud off the shoe.",
       why: "Pointing the toe hard at the bottom does the work with the calf instead of the big muscles above the knee, which is a smaller engine that tires sooner. It also reads as a saddle slightly too high, so it is worth settling alongside the number above.",
     };
   else
     fix = {
       title: "Position holds up — keep riding",
-      line: `Knee ${k}° at the bottom, cadence ${cadence.toFixed(0)} rpm — the basics are in their bands.`,
+      line: `Knee ${k}° at the bottom, cadence ${cadence.toFixed(0)} rpm — both are where experienced riders sit.`,
       cue: "Film again in a month, or after any change to the bike.",
       why: "Nothing here is costing you power or comfort. The next gains are in how your knees track and how level you sit, which need the front and rear views.",
     };
@@ -1456,13 +1456,44 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     pooled: { value: +pooled.value.toFixed(1), u: +pooled.u.toFixed(2), rides: pooled.rides,
               settled: pooled.settled, lo: +pooled.lo.toFixed(1), hi: +pooled.hi.toFixed(1) },
     fix,
-    /* Every card answers "so what?".
-       A band and a number tell a rider what was measured; they do not tell
-       them why to care or what better would feel like. `means` is that
-       sentence, and it is not optional — a card without one is a fact filed at
-       someone rather than coaching. It stays inside what FORM can support:
-       what the joint does in the stroke, where the load goes, and what riders
-       notice when it moves. No watt claims, no injury promises. */
+    /* HOW A CARD IS WRITTEN — the rule, for every card in this app.
+       (tests/card-language.test.mjs holds it; js/pages/analyze.js follows it
+       for the front and rear cards.)
+
+       A card has two parts and they have different jobs.
+
+       `means` is the face, and it is the part a rider actually reads. It has
+       to do two things, in this order:
+
+         1. Say what the body is doing at that moment. Which muscles are being
+            asked to work, where the load lands, what the joint is doing in
+            the circle. This is the mechanics, and it is the reason the
+            measurement exists at all — a rider who understands it can judge
+            our advice instead of taking it on faith.
+
+         2. Say what changes if it moves. Not "this is out of range" — what
+            the RIDER gets: power arriving from a different muscle, weight
+            coming off the hands, an ache that stops, a position that can be
+            held for another hour. Tangible, and in the second person.
+
+       A card with only the first half is an anatomy lesson. A card with only
+       the second is a verdict with nothing behind it. Both, or it is not
+       finished. No watt claims and no injury promises: what the joint does,
+       where the load goes, and what riders notice when it moves.
+
+       `note` is the working, one tap down — the number, the usual range, how
+       sure we are, and any reason to trust it less. Written the same way, for
+       a rider who has never read a fit report.
+
+       What neither may ever contain is our own vocabulary. No "band" for our
+       thresholds, no "cited", no "verdict" as a thing we hand out or withhold,
+       no model, landmark, confidence or geometry, and no notes to ourselves
+       about what we are building next. If a sentence would only make sense to
+       someone who has read this file, it does not ship — say the honest thing
+       in the rider's words instead. "There is no good published range for
+       this, so we will not score it" carries exactly the same information as
+       "no cited band, reported without a verdict", and one of them is
+       readable. */
     cards: (provisional ? stripVerdicts : (c) => c)([
       /* Two numbers, deliberately: how much the rider varies (±sd, about them)
          and how well the centre is known (±u, about the read). Showing only the
@@ -1471,16 +1502,16 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
          edge" up top and "Close" down here is telling two stories about one
          joint. */
       { name: "Knee at 6 o'clock", value: k + "°", shot: shots.get("knee"),
-        means: "This one setting decides where your power comes from. Straighten too far and you reach for the bottom of the stroke, so the hips rock and the load slides onto the back of the knee. Stay too folded and you never get through the strongest part of the push. Inside the band the leg works where it is strongest, and long rides stop aching in the same place.",
+        means: "This one setting decides where your power comes from. Straighten too far and you reach for the bottom of the stroke, so the hips rock and the load slides onto the back of the knee. Stay too folded and you never get through the strongest part of the push. Somewhere in between, the leg works where it is strongest, and long rides stop aching in the same place.",
         verdict: pooled.settled && pooledVerdict === "borderline" ? "At edge" : word(pooledVerdict),
-        note: `Band ${kLo}–${kHi}° while riding — this is the saddle-height check. You vary ±${kSd}° from stroke to stroke across ${kneeBDC.n} clearly-seen strokes${kneeBDC.n < kneeBDC.of ? ` of ${kneeBDC.of}` : ""}; averaged, that puts this ride's centre within ±${kU.toFixed(1)}°.${
-          pooled.rides > 1 ? ` Pooled with your previous ${pooled.rides - 1} ride${pooled.rides > 2 ? "s" : ""}: ${pv}° ±${pooled.u.toFixed(1)}°.` : ""}` },
+        note: `Riders sit between ${kLo}° and ${kHi}° at the bottom of the stroke, and where you land in that is what tells you whether the saddle is at the right height. Your own strokes varied by ${kSd}° either way; across the ${kneeBDC.n} we could read clearly${kneeBDC.n < kneeBDC.of ? ` of ${kneeBDC.of}` : ""} this ride comes out at ${k}°, give or take ${kU.toFixed(1)}°.${
+          pooled.rides > 1 ? ` Counting your previous ${pooled.rides - 1} ride${pooled.rides > 2 ? "s" : ""} too: ${pv}°, give or take ${pooled.u.toFixed(1)}°.` : ""}` },
       ...(toeBDC ? [{ name: "Foot at 6 o'clock", shot: shots.get("foot"),
         means: "Pointing the toe hard at the bottom hands the work to your calf — a far smaller muscle than the ones above the knee, and the first to go on a long climb. A flatter foot lets the quad and glute finish the stroke instead.", value: toeBDC.value.toFixed(0) + "° toe-down", verdict: word(toeVerdict),
-        note: `Band ${BANDS.footToeDown6[0]}–${BANDS.footToeDown6[1]}° toe-down at the bottom. ±${toeBDC.sd.toFixed(1)}° across your strokes.` }] : []),
+        note: `Most riders come through the bottom between ${BANDS.footToeDown6[0]}° and ${BANDS.footToeDown6[1]}° toe-down. Yours moved by ${toeBDC.sd.toFixed(1)}° either way from stroke to stroke.` }] : []),
       ...(hipTDC ? [{ name: "Hip fold at the top", shot: shots.get("hip"),
         means: "How closed you are at the top of each stroke. Too closed and the top of the circle gets blocked — riders feel it as a catch, or as not being able to get low on the bars without losing power. It opens up through saddle setback and bar height, not by trying harder.", value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
-        note: `Fitting window ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° depending on flexibility. ±${hipTDC.sd.toFixed(1)}° across your strokes.` }] : []),
+        note: `Fitters work to ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° here — the open end if you are flexible, the closed end if you are not. Yours moved by ${hipTDC.sd.toFixed(1)}° either way from stroke to stroke.` }] : []),
       /* Reported as a position, never as a verdict: knee-over-axle is where
          fitters START, not where riders should end up, and the two assumptions
          under the centimetre figure are named rather than hidden. */
@@ -1490,15 +1521,15 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
         value: foreaft.cm != null
           ? `${foreaft.cm > 0 ? "+" : ""}${foreaft.cm.toFixed(1)} cm`
           : `${foreaft.ofFemur > 0 ? "+" : ""}${(foreaft.ofFemur * 100).toFixed(0)}% of thigh`,
-        note: `Plus means your knee is ahead of the pedal axle with the cranks level. Fitters commonly start with it roughly over the axle and move from there — it is a reference position, not a target, and no verdict is given on it. Measured over ${foreaft.n} strokes.${
+        note: `Plus means your knee is ahead of the pedal spindle with the cranks level. Fitters usually start with the two roughly stacked and then move the saddle to suit the rider, so this is a starting point rather than something to hit — we do not score it. Measured over ${foreaft.n} strokes.${
           foreaft.cm != null
-            ? " Centimetres are approximate: scaled from your height through an average thigh proportion, and the axle is placed under the ball of your foot rather than seen."
+            ? " The centimetres are close rather than exact: they come from your height and from where the pedal spindle normally sits under a foot, neither of which we can see in the video."
             : " Add your height on the Me screen to see this in centimetres."}`,
       }] : []),
       { name: "Cadence", value: cadence.toFixed(0) + " rpm",
-        means: "Spinning faster shifts the effort off your legs and onto your heart and lungs; grinding does the opposite. Neither is wrong — but a long way from your natural cadence costs you late in a ride, when whichever system is carrying it starts to fade.", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Research sweet spot ${BANDS.cadence[0]}–${BANDS.cadence[1]} rpm for experienced riders.` },
+        means: "Spinning faster shifts the effort off your legs and onto your heart and lungs; grinding does the opposite. Neither is wrong — but a long way from your natural cadence costs you late in a ride, when whichever system is carrying it starts to fade.", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Experienced riders mostly settle between ${BANDS.cadence[0]} and ${BANDS.cadence[1]} rpm. Below that you are pushing harder on each stroke; above it you are asking more of your breathing.` },
       { name: "Torso angle", value: torso.value.toFixed(0) + "°", shot: shots.get("torso"),
-        means: "How far forward you are folded. Lower cuts through the air better; higher is easier to breathe in and hold. The right answer is the lowest position you can stay in without shifting around, because a position you keep leaving is slower than a higher one you can hold.", note: "Above horizontal. What it's worth in watts depends on speed — ride-file pairing comes next." },
+        means: "Folding lower puts less of you in the wind, and on the flat pushing air out of the way is where nearly all of your effort ends up going. But a low back asks more of your hip flexors to hold, and squeezes the room your lungs have to work in. The right answer is the lowest you can hold without shifting about, because a position you keep climbing out of is slower than a higher one you can stay in all day.", note: "Measured up from horizontal, so a smaller number is a flatter back. What flattening out is actually worth to you depends on how fast you are going — most of it at speed on the flat, almost none of it grinding up a climb." },
     ]),
   };
 }
@@ -1515,6 +1546,6 @@ function stripVerdicts(cards) {
   return cards.map((c) => ({
     ...c,
     verdict: "",
-    note: c.note + " Provisional — the camera wasn't square, so treat this as indicative.",
+    note: c.note + " The camera was not square to the bike, which stretches every angle a little, so read this as a rough figure rather than one to act on.",
   }));
 }

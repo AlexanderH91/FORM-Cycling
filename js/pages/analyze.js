@@ -398,14 +398,16 @@ function viewsBlock(r) {
 }
 
 function addExtraViewCards(r) {
-  // A gate says what it saw, so a failure is diagnosable instead of mysterious.
+  /* A refusal says what we actually saw, so it reads as a fixable framing
+     problem rather than as the app being broken. In frames and seconds — the
+     things the rider controls when they film it again. */
   const why = (seen) => !seen ? "" :
-    ` (found you in ${seen.posed} of ${seen.sampled} frames over ${seen.span}s, average joint confidence ${seen.visibility})`;
+    ` We found you in ${seen.posed} of the ${seen.sampled} frames we looked at, across ${seen.span} seconds of footage.`;
 
   const f = r.front;
   if (f?.gate) {
     r.cards.push({ name: "Knees from the front", value: "—", note: f.gate + why(f.seen),
-      means: "The front view is the only one that can see a knee tracking in or out — no other angle shows it. Worth another go, because it is where most knee aches are explained." });
+      means: "Filmed from the side or behind, a knee sliding in or out of line is invisible — your leg simply looks like it is going up and down. Only the front shows it, and a knee that wanders is putting part of every stroke's work out sideways instead of down into the pedal — which is what sits behind most aches on the inside or the outside of the knee. Worth another go." });
   } else if (f) {
     const t = f.kneeTravel;
     const both = t.left != null && t.right != null;
@@ -413,24 +415,24 @@ function addExtraViewCards(r) {
     const hidden = f.readings ? Math.round((100 * f.rebuilt) / f.readings) : 0;
     r.cards.push({
       name: "Knee travel (front)", shot: f.stills?.knees,
-      means: "A knee that swings in or out is spending part of every stroke sideways instead of down, and it is the pattern most often sitting behind an ache on the inside or outside of the joint. Cleat position, saddle height and foot support all move it — which is why it is worth knowing before you change any of them.",
+      means: "A knee that swings in or out is sending part of every stroke's work sideways instead of down into the pedal, and it is the pattern most often sitting behind an ache on the inside or the outside of the joint. Cleat position, saddle height and foot support all move it — which is why it is worth knowing before you change any of them.",
       value: both ? `${t.left}° L · ${t.right}° R` : `${t.left ?? t.right}° ${f.oneLegOnly === "left" ? "L" : "R"}`,
       note: (both
-        ? "How far each knee leans in and out across the stroke, measured from vertical."
-        : `Only your ${f.oneLegOnly} knee stayed in view long enough to measure. This is how far it leans in and out across the stroke.`)
-        + " No research band for this in FORM yet, so it is reported without a verdict."
-        + (hidden ? ` The bike or your own arms hid a knee in ${hidden}% of frames; those were rebuilt from your hip and ankle and the bone lengths measured off the frames that were clear — geometry, not a guess.` : ""),
+        ? "How far each knee swings in and out over a stroke, measured against straight up from the ankle."
+        : `Only your ${f.oneLegOnly} knee stayed in view long enough to measure. This is how far it swings in and out over a stroke.`)
+        + " There is no good published range to hold this against, so we will not score it — but the two sides can be compared with each other, which is the card below."
+        + (hidden ? ` For ${hidden}% of the stroke a knee was behind the bars or your own arm. We worked out where it was from your hip, your ankle and the length of your own thigh and shin, measured off the part of the ride where the leg was in clear view.` : ""),
     });
     if (f.asymmetry) {
       const even = f.asymmetry < 1.35;
       r.cards.push({
         name: "Left / right evenness",
-        means: "A leg travelling further than the other is doing a different job. Riders usually meet it as one side tiring first on a long climb, or as a saddle that never quite feels square underneath them.",
+        means: "Your two legs are doing the same job, so a knee that wanders further than its partner is being asked to work differently — some of that leg's effort goes sideways instead of into the pedal. Riders meet it as one side tiring first on a long climb, or as a saddle that never quite sits square underneath them. Cleat position is usually what moves it.",
         value: `${f.asymmetry}×`,
         verdict: even ? "Even" : "Watch",
         note: even
-          ? "Your knees travel about the same amount — this compares you with yourself, so it needs no external band."
-          : `Your ${f.looser} knee travels ${f.asymmetry}× as far as the other. Worth watching; it compares you with yourself rather than a research band.`,
+          ? "Your two knees swing about the same amount. This one compares you with yourself, so it stands up even where there is no published range to check against."
+          : `Your ${f.looser} knee swings ${f.asymmetry} times as far as the other. Worth watching rather than acting on straight away: it compares your two sides with each other, which is a fair test, but one ride is a small sample.`,
       });
     }
   }
@@ -438,19 +440,19 @@ function addExtraViewCards(r) {
   const b = r.rear;
   if (b?.gate) {
     r.cards.push({ name: "Shoulders and pelvis (behind)", value: "—", note: b.gate + why(b.seen),
-      means: "From behind, FORM can see whether you sit level or rock to chase the pedals — the check that confirms or contradicts the saddle-height reading from the side." });
+      means: "From behind you can see whether you sit level or roll from side to side chasing the pedals. Rocking is the body reaching for a saddle that is slightly too high, and every bit of roll is effort spent moving you about rather than moving the bike. This view is what confirms or overturns the saddle-height answer from the side, so it is worth another go." });
   } else if (b) {
     if (b.pelvicRock != null) r.cards.push({
       name: "Pelvic rock (behind)", shot: b.stills?.body,
-      means: "Hips rocking side to side usually means you are reaching for the bottom of the stroke — the classic sign of a saddle a touch too high. Every degree of rock is movement going sideways instead of into the pedals, and it is what starts rubbing after two hours.",
+      means: "Hips rocking side to side usually means you are reaching for the bottom of the stroke — the classic sign of a saddle a touch too high. Every degree of rock is effort going sideways instead of into the pedals, and it is what starts rubbing after two hours.",
       value: `${b.pelvicRock}°`,
-      note: "How much your hips tilt side to side over the stroke. Reported without a verdict — FORM has no cited band for it yet.",
+      note: "How far your hips tilt from side to side over a stroke. There is no good published figure for how much is too much, so we will not score it — read it next to the knee angle from the side view, which is the number that decides saddle height.",
     });
     if (b.shoulderRock != null) r.cards.push({
       name: "Shoulder rock (behind)", shot: b.stills?.body,
-      means: "Shoulders usually follow the hips. On its own this can simply be how you ride; sitting next to pelvic rock, it is the same story told twice, and it is the hips that need fixing.",
+      means: "Your shoulders sit on top of whatever your hips are doing, so they usually just follow. On their own, a bit of shoulder movement is often just how you ride and costs you almost no power. Alongside rocking hips it is the same problem showing up twice, and it is the saddle underneath that needs moving — steady the hips and the shoulders settle on their own.",
       value: `${b.shoulderRock}°`,
-      note: "Side-to-side tilt across the shoulders over the stroke.",
+      note: "How far your shoulder line tips from side to side over a stroke. Some of this is normal, especially out of the saddle or on a climb; it is worth attention mainly when your hips are moving too.",
     });
     // Rocking is classic evidence of reaching for the pedals. Say so only when
     // the side view already found the same thing, so the two never disagree.
@@ -610,7 +612,7 @@ export function fitContain(boxW, boxH, vidW, vidH) {
 const ANGLE_VIEWS = {
   side: {
     label: "Side",
-    caption: "Knee angle, drawn on the joints the model found in each frame. Green in band, gold out.",
+    caption: "Your knee angle through the stroke, drawn on the joints we could see in each frame. Green where you are inside the range riders sit in, gold where you are outside it.",
     track: (r) => r.track,
     trim: (r) => r.trim,
     readout: (f) => (typeof f.knee === "number" ? `${f.knee.toFixed(0)}°` : "–"),
