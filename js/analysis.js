@@ -647,7 +647,10 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
     const worst = ranked[0];
     const shot = await bestStill(video, lm, ranked.map((i) => rows[i].t), (ctx, p, w, h) => {
       const seen = (i) => SEEN(p[i]);
-      const pairs = [[25, 27], [26, 28]].filter(([k, a]) => seen(k) && seen(a));
+      // The same anatomy check the measurement uses, so the still can never
+      // draw a "leg" the numbers already rejected.
+      const pairs = [[25, 27], [26, 28]].filter(([k, a]) =>
+        seen(k) && seen(a) && p[k].y > (k === 25 ? p[23] : p[24]).y && p[a].y > p[k].y);
       if (!pairs.length) return false;
       for (const [k, a] of pairs) {
         plumb(ctx, { x: p[a].x, y: p[a].y }, { x: p[a].x, y: p[k].y }, "#9C9A93", w, h);
@@ -677,7 +680,17 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
        model's own left/right labels — facing the camera it swaps those
        readily, and a swap moves one leg's lean into the other leg's series.
        A rider faces us, so the leg on the left of frame is their right. */
-    const legs = [[25, 27], [26, 28]].filter(([k, a]) => vis(k) && vis(a));
+    /* Visibility is not enough. The model reports a confident-looking score
+       for a badly placed joint, and from the front — with the bars and the
+       frame across the legs — it puts "knee" and "ankle" on a forearm often
+       enough to matter. A seated rider's knee is always below their hip and
+       their ankle always below their knee; a pair that fails that is not a
+       leg, whatever the model called it. */
+    const isLeg = (k, a) => {
+      const hip = k === 25 ? p[23] : p[24];
+      return vis(k) && vis(a) && p[k].y > hip.y && p[a].y > p[k].y;
+    };
+    const legs = [[25, 27], [26, 28]].filter(([k, a]) => isLeg(k, a));
     if (legs.length === 2 && sq(p[legs[0][0]]).x > sq(p[legs[1][0]]).x) legs.reverse();
     for (const [n, [k, a]] of legs.entries()) {
       // screen-left leg first: that is the rider's right
@@ -768,8 +781,10 @@ export async function analyzeRearClip(blob, trim, onProgress) {
     };
     const row = { vis: mean([11, 12, 23, 24].map((i) => p[i].visibility ?? 1)) };
     const level = (v) => (Number.isFinite(v) && Math.abs(v) <= SANITY.tiltDeg ? v : null);
-    if (vis(11) && vis(12)) row.shoulder = level(tilt(p[11], p[12]));
-    if (vis(23) && vis(24)) row.pelvis = level(tilt(p[23], p[24]));
+    // Shoulders above hips, or the model has not found a rider on a bike.
+    const upright = Math.min(p[11].y, p[12].y) < Math.min(p[23].y, p[24].y);
+    if (upright && vis(11) && vis(12)) row.shoulder = level(tilt(p[11], p[12]));
+    if (upright && vis(23) && vis(24)) row.pelvis = level(tilt(p[23], p[24]));
     if (row.shoulder == null && row.pelvis == null) return null;
     const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
     row.t = t;

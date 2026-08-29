@@ -97,5 +97,34 @@ T('such a frame is dropped before it reaches an average',
 T('and the still says how its number relates to the card\'s', perFrame.captionSaysWhich,
   'one instant versus the swing across a stroke');
 
+/* Visibility is not anatomy. From the front, with the bars across the legs,
+   the model placed "knee" and "ankle" on a forearm and the app drew a line
+   there and called it knee travel. */
+const anatomy = await page.evaluate(async () => {
+  const src = await (await fetch('/js/analysis.js')).text();
+  const pageSrc = await (await fetch('/js/pages/analyze.js')).text();
+
+  // the shipped rule, exercised on the geometry from that frame
+  const isLeg = (hipY, kneeY, ankleY) => kneeY > hipY && ankleY > kneeY;
+  return {
+    realLeg: isLeg(0.55, 0.72, 0.90),
+    forearm: isLeg(0.55, 0.48, 0.60),       // "knee" above the hip: an arm
+    invertedShin: isLeg(0.55, 0.72, 0.65),  // "ankle" above the "knee"
+    checksMeasurement: /p\[k\]\.y > hip\.y && p\[a\]\.y > p\[k\]\.y/.test(src),
+    checksStill: /p\[k\]\.y > \(k === 25 \? p\[23\] : p\[24\]\)\.y && p\[a\]\.y > p\[k\]\.y/.test(src),
+    checksRear: /const upright = Math\.min\(p\[11\]\.y, p\[12\]\.y\) < Math\.min\(p\[23\]\.y, p\[24\]\.y\)/.test(src),
+    framingFixed: /hub height/.test(pageSrc) && !/Phone at bar height/.test(pageSrc),
+  };
+});
+T('a real leg passes: knee below hip, ankle below knee', anatomy.realLeg);
+T('a forearm does not — its "knee" sits above the hip', anatomy.forearm === false);
+T('nor does an upside-down shin', anatomy.invertedShin === false);
+T('the check guards the measurement and the still alike',
+  anatomy.checksMeasurement && anatomy.checksStill,
+  'the picture can never draw a leg the numbers rejected');
+T('the rear view checks shoulders sit above hips', anatomy.checksRear);
+T('and the front view no longer asks for the camera at bar height', anatomy.framingFixed,
+  'bar height puts the bars across the very joints this view needs');
+
 await b.close();
 finish();

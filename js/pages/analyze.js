@@ -15,7 +15,11 @@ const VIEWS = [
     hint: "Phone at saddle height, 2–3 m away — whole bike and rider in frame. This is the view we measure.",
     title: "Side view", gives: "saddle height, hip fold, foot angle, cadence and fore/aft" },
   { key: "front", label: "Front",  need: "optional",
-    hint: "Phone at bar height, straight ahead — both knees visible.",
+    /* Bar height was wrong guidance, and it was mine. At bar height the bars
+       and the levers sit across exactly the part of the leg this view needs,
+       so the model ends up guessing at knees it cannot see. Low and further
+       back puts the legs in clear air. */
+    hint: "Phone low — about hub height — and 2–3 m in front. Knees and feet in clear view, not behind the bars.",
     title: "Front view", gives: "whether your knees track in or out, which no other angle can see" },
   { key: "rear",  label: "Behind", need: "optional",
     hint: "Behind the rear wheel, light from the side — never a window straight behind you.",

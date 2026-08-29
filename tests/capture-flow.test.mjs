@@ -60,7 +60,7 @@ T('a filmed angle is ticked, with its length', /✓/.test(after.sideState), `"${
 T('the next angle is asked for by name', after.nextShown && after.nextTitle === 'Front view',
   `"${after.nextTitle}"`);
 T('it says what that angle measures', /knees track in or out/.test(after.nextWhy ?? ''), after.nextWhy);
-T('and how to stand the phone for it', /bar height/.test(after.nextHow ?? ''), after.nextHow);
+T('and where to stand the phone for it', /hub height/.test(after.nextHow ?? ''), after.nextHow);
 T('with a button that goes straight there', after.nextBtn === 'Film the front view' && after.goto === 'front',
   `"${after.nextBtn}"`);
 T('analysing what you already have is still allowed', after.goEnabled);
@@ -77,7 +77,7 @@ const switched = await page.evaluate(() => ({
 T('it puts you back behind the lens, not on the last take',
   switched.onFront && switched.camShown && switched.reviewHidden,
   `front=${switched.onFront} cam=${switched.camShown} review hidden=${switched.reviewHidden}`);
-T('with that angle\'s framing instruction on screen', /bar height/.test(switched.hint), switched.hint);
+T('with that angle\'s framing instruction on screen', /hub height/.test(switched.hint), switched.hint);
 T('no page errors', errs.length === 0, errs.join(' | ') || 'clean');
 await b.close();
 finish();
