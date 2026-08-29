@@ -11,6 +11,7 @@ await page.goto(`${BASE}/index.html`);
 
 const r = await page.evaluate(async () => {
   const C = await import('/js/config.js');
+  const S = await import('/js/analysis.js');
   const src = await (await fetch('/js/analysis.js')).text();
 
   // amplitude, as shipped
@@ -40,7 +41,28 @@ const r = await page.evaluate(async () => {
     gatesRear: /more tilt than a body makes/.test(src),
     usesSane: (src.match(/sane\(\+amplitude/g) || []).length === 4,
     retriesModel: /cache\.delete\(key\); throw e;/.test(src),
-    legsByPosition: /legs\.length === 2 && sq\(p\[legs\[0\]\[0\]\]\)\.x > sq\(p\[legs\[1\]\[0\]\]\)\.x/.test(src),
+    legsByPosition: (() => {
+      /* Facing the camera, the model swaps its own left/right labels readily,
+         and a swap moves one leg's lean into the other leg's series. Run the
+         same clip twice with the labels exchanged: the rider's left leg must
+         come back as the rider's left leg either way. */
+      const AR = 1080 / 1920;
+      // The two legs lean differently, so a swap would show up if it happened.
+      const legAt = (x, k, a) => ({ hip: { x, y: 0.40 }, knee: { x: x + k, y: 0.50 },
+                                    ankle: { x: x + a, y: 0.62 }, ends: true, clean: true });
+      const build = (swap) => {
+        const rows = [];
+        for (let i = 0; i < 12; i++) {
+          const near = legAt(AR / 2 + 0.06, 0.02, 0.05), far = legAt(AR / 2 - 0.06, -0.03, -0.06);
+          rows.push({ t: i / 12, ar: AR, vis: 0.9,
+                      legs: swap ? { l: far, r: near } : { l: near, r: far } });
+        }
+        S.settleFrontLegs(rows, 12);
+        return rows.map((x) => [x.left, x.right]);
+      };
+      const plain = build(false), swapped = build(true);
+      return JSON.stringify(plain) === JSON.stringify(swapped);
+    })(),
   };
 });
 
@@ -104,14 +126,28 @@ const anatomy = await page.evaluate(async () => {
   const src = await (await fetch('/js/analysis.js')).text();
   const pageSrc = await (await fetch('/js/pages/analyze.js')).text();
 
-  // the shipped rule, exercised on the geometry from that frame
-  const isLeg = (hipY, kneeY, ankleY) => kneeY > hipY && ankleY > kneeY;
+  /* The shipped rule itself, not a copy of it: frontLegs is what both the
+     measurement and the still now ask, so drive that. */
+  const S = await import('/js/analysis.js');
+  const marks = (hipY, kneeY, ankleY) => {
+    const p = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0.99 }));
+    p[23] = { x: 0.5, y: hipY, visibility: 0.99 };
+    p[25] = { x: 0.5, y: kneeY, visibility: 0.99 };
+    p[27] = { x: 0.5, y: ankleY, visibility: 0.99 };
+    return p;
+  };
+  const sq = S.squareUp(1080 / 1920);
+  const isLeg = (hipY, kneeY, ankleY) => S.frontLegs(marks(hipY, kneeY, ankleY), sq).l.clean;
   return {
     realLeg: isLeg(0.55, 0.72, 0.90),
     forearm: isLeg(0.55, 0.48, 0.60),       // "knee" above the hip: an arm
     invertedShin: isLeg(0.55, 0.72, 0.65),  // "ankle" above the "knee"
-    checksMeasurement: /p\[k\]\.y > hip\.y && p\[a\]\.y > p\[k\]\.y/.test(src),
-    checksStill: /p\[k\]\.y > \(k === 25 \? p\[23\] : p\[24\]\)\.y && p\[a\]\.y > p\[k\]\.y/.test(src),
+    /* One rule, asked in both places — the measurement's sampler and the
+       still's draw callback. They cannot drift apart into disagreeing about
+       the same frame, which is how a shin came to be drawn along a forearm
+       while the numbers were correctly ignoring it. */
+    checksMeasurement: /const legs = frontLegs\(p, sq\);/.test(src),
+    checksStill: /const legs = frontLegs\(p, squareUp\(ar\)\);/.test(src),
     checksRear: /const upright = Math\.min\(p\[11\]\.y, p\[12\]\.y\) < Math\.min\(p\[23\]\.y, p\[24\]\.y\)/.test(src),
     framingFixed: /hub height/.test(pageSrc) && !/Phone at bar height/.test(pageSrc),
   };
@@ -134,6 +170,7 @@ T('and the front view no longer asks for the camera at bar height', anatomy.fram
    together cannot define a line at all. */
 const tracks = await page.evaluate(async () => {
   const C = await import('/js/config.js');
+  const S = await import('/js/analysis.js');
   const src = await (await fetch('/js/analysis.js')).text();
   const css = await (await fetch('/css/app.css')).text();
   const pageSrc = await (await fetch('/js/pages/analyze.js')).text();
@@ -142,8 +179,22 @@ const tracks = await page.evaluate(async () => {
   const stage = pageSrc.indexOf('<div class="stagewrap">');
   const tabs = pageSrc.indexOf('id="mvtabs"');
   return {
-    frontTrackFiltered: /for \(const \[k, a\] of legs\) \{/.test(src)
-      && !/row\.j = \{ lknee: xy\(p\[25\]\)/.test(src),
+    frontTrackFiltered: (() => {
+      /* A leg the measurement would not use must leave nothing behind for the
+         player to draw. One leg unusable: only the other leg's joints travel.
+         Neither usable: the frame carries no drawing at all. */
+      const AR = 1080 / 1920;
+      const ok = { hip: { x: 0.34, y: 0.40 }, knee: { x: 0.35, y: 0.50 },
+                   ankle: { x: 0.37, y: 0.62 }, ends: true, clean: true };
+      const gone = { hip: { x: 0, y: 0 }, knee: { x: 0, y: 0 },
+                     ankle: { x: 0, y: 0 }, ends: false, clean: false };
+      const rows = [];
+      for (let i = 0; i < 10; i++) rows.push({ t: i / 12, ar: AR, vis: 0.9, legs: { l: ok, r: gone } });
+      rows.push({ t: 10 / 12, ar: AR, vis: 0.9, legs: { l: gone, r: gone } });
+      S.settleFrontLegs(rows, 12);
+      const keys = Object.keys(rows[5].j || {});
+      return keys.length === 3 && keys.every((k) => k[0] === 'l') && rows[10].j === null;
+    })(),
     rearTrackFiltered: /if \(row\.shoulder != null\) \{ row\.j\.lsho/.test(src),
     spanChecked: /shoulderW >= SANITY\.minSpanOfFrame/.test(src)
       && /hipW >= shoulderW \* SANITY\.hipOverShoulder/.test(src),

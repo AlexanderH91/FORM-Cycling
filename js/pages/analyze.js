@@ -409,6 +409,8 @@ function addExtraViewCards(r) {
   } else if (f) {
     const t = f.kneeTravel;
     const both = t.left != null && t.right != null;
+    // Say when a number leaned on the linkage rather than on a clear view.
+    const hidden = f.readings ? Math.round((100 * f.rebuilt) / f.readings) : 0;
     r.cards.push({
       name: "Knee travel (front)", shot: f.stills?.knees,
       means: "A knee that swings in or out is spending part of every stroke sideways instead of down, and it is the pattern most often sitting behind an ache on the inside or outside of the joint. Cleat position, saddle height and foot support all move it — which is why it is worth knowing before you change any of them.",
@@ -416,7 +418,8 @@ function addExtraViewCards(r) {
       note: (both
         ? "How far each knee leans in and out across the stroke, measured from vertical."
         : `Only your ${f.oneLegOnly} knee stayed in view long enough to measure. This is how far it leans in and out across the stroke.`)
-        + " No research band for this in FORM yet, so it is reported without a verdict.",
+        + " No research band for this in FORM yet, so it is reported without a verdict."
+        + (hidden ? ` The bike or your own arms hid a knee in ${hidden}% of frames; those were rebuilt from your hip and ankle and the bone lengths measured off the frames that were clear — geometry, not a guess.` : ""),
     });
     if (f.asymmetry) {
       const even = f.asymmetry < 1.35;
@@ -621,7 +624,7 @@ const ANGLE_VIEWS = {
   },
   front: {
     label: "Front",
-    caption: "Each shin against a plumb line. The gap at the knee is how far it leans in or out across the stroke.",
+    caption: "Each leg against a plumb line from the ankle. The gap at the knee is how far it leans in or out across the stroke.",
     track: (r) => r.front?.track,
     trim: (r) => r.front?.trim,
     readout: (f) => {
@@ -629,11 +632,15 @@ const ANGLE_VIEWS = {
       return v.length ? `${Math.max(...v.map(Math.abs)).toFixed(0)}°` : "–";
     },
     draw(ctx, f, at, lw) {
-      for (const [knee, ankle] of [["lknee", "lankle"], ["rknee", "rankle"]]) {
+      /* Thigh as well as shin. The front pass reconstructs an occluded knee
+         from the hip and the ankle, so the hip is the joint that decides where
+         the knee went — drawing the leg without it would hide the half of the
+         geometry doing the work. */
+      for (const [hip, knee, ankle] of [["lhip", "lknee", "lankle"], ["rhip", "rknee", "rankle"]]) {
         if (!f.j[knee] || !f.j[ankle]) continue;
         const k = at(f.j[knee]), a = at(f.j[ankle]);
         dashed(ctx, [a[0], a[1]], [a[0], k[1]], lw);      // straight up from the ankle
-        line(ctx, [k, a], OUT, lw);
+        line(ctx, f.j[hip] ? [at(f.j[hip]), k, a] : [k, a], OUT, lw);
       }
     },
   },

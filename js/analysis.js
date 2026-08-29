@@ -1,5 +1,6 @@
 import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FINE_MODEL_TIMEOUT_MS, SUBFRAME, SANITY,
          FEMUR_OVER_HEIGHT, AXLE_ALONG_FOOT } from "./config.js";
+import { boneLengths, bestLeg, movedTooFar } from "./limbs.js";
 
 /* On-device side-view analysis.
    MediaPipe Pose Landmarker (WASM) runs in the browser; the video never
@@ -360,7 +361,10 @@ async function still(video, lm, t, draw, side, maxW = 720) {
   /* side === null hands the draw callback the raw landmark array. The side
      view wants one leg picked for it; the front and rear views need both
      sides at once, so they take the landmarks as they come. */
-  const focus = p ? draw(ctx, side ? pickSide(p, side) : p, c.width, c.height) : false;
+  /* `t` goes to the callback as well: the front view rebuilds occluded knees,
+     and a reconstruction needs to know which of two mirrored answers is the
+     rider's. The settled row at this moment already knows. */
+  const focus = p ? draw(ctx, side ? pickSide(p, side) : p, c.width, c.height, t) : false;
   const drawn = focus !== false;
   return { src: crop(c, drawn ? focus : null), drawn };
 }
@@ -634,31 +638,159 @@ export function overlayAt(track, t, tol = 0.12) {
   return out;
 }
 
-/* FRONT VIEW — how far each knee wanders sideways over the stroke.
-   Measured per leg as the ankle→knee line's lean from vertical, so it is
-   independent of how far away the phone was. */
+/* How far a knee leans off vertical, per leg, in the frontal plane — and the
+   linkage that makes those readings survive a bike being in the way.
+
+   From the front the model's hardest problem is not the rider, it is the bike:
+   bars, brake hoods, a top tube and two forearms all cross the legs, and every
+   one of them is a plausible-looking place to put a "knee". Checking each
+   frame against anatomy and discarding what fails is honest but wasteful — and
+   it still lets through a knee that happens to sit below the hip while being
+   nowhere near the leg.
+
+   A body is a linkage. This rider's thigh is the same length in every frame,
+   so once it has been measured from the frames the model clearly got right,
+   the knee in every other frame is not a guess: it is the intersection of a
+   circle of one femur about the hip with a circle of one tibia about the
+   ankle. Two answers at most, and the previous frame says which.
+
+   Both are pure and exported, so the geometry can be driven from a test
+   without a video in front of it. */
+const FRONT_FPS = 12;
+const LEGS = ["l", "r"];
+
+/* One frame's two legs, in squared coordinates.
+   `clean` — the model's own reading is anatomically possible: a seated
+   rider's knee is always below their hip and their ankle always below their
+   knee. Only clean legs are allowed to define the rider's bone lengths.
+   `ends` — the hip and the ankle can be trusted even when the knee between
+   them cannot. That is the case the geometry exists for. */
+export function frontLegs(p, sq) {
+  const vis = (i) => (p[i].visibility ?? 1) >= CAPTURE.minJointVisibility;
+  const leg = (h, k, a) => {
+    const ends = vis(h) && vis(a) && p[a].y > p[h].y;
+    return {
+      hip: sq(p[h]), knee: sq(p[k]), ankle: sq(p[a]), ends,
+      clean: ends && vis(k) && p[k].y > p[h].y && p[a].y > p[k].y,
+    };
+  };
+  return { l: leg(23, 25, 27), r: leg(24, 26, 28) };
+}
+
+/* Pass two: measure this rider, then hold every frame to them. Runs once —
+   it is called from the still hook, which fires while the video is still
+   open, and again afterwards for the case where the clip gave no still. */
+export function settleFrontLegs(rows, fps = FRONT_FPS) {
+  if ("bones" in rows) return rows.bones;
+  const clean = [];
+  for (const r of rows) for (const s of LEGS) if (r.legs[s].clean) clean.push(r.legs[s]);
+  const bones = boneLengths(clean);
+  rows.bones = bones;
+  const tally = { measured: 0, rebuilt: 0, dropped: 0,
+    femur: bones ? +bones.femur.toFixed(3) : null,
+    tibia: bones ? +bones.tibia.toFixed(3) : null,
+    from: bones ? bones.from : 0 };
+  rows.repair = tally;
+
+  const last = { l: null, r: null };
+  for (const r of rows) {
+    r.j = {};
+    const held = {};
+    for (const s of LEGS) {
+      const leg = r.legs[s];
+      if (!leg.ends) continue;
+      const prev = last[s];
+      /* A knee that fails the anatomy check is never accepted as measured,
+         however well its bone lengths happen to come out — it goes in as a
+         hint for which of the two mirrored answers is the rider's, and the
+         geometry decides where it actually was. Without bone lengths there is
+         nothing to check against at all, so the old rule stands: take the
+         frames anatomy allows and drop the rest. */
+      const best = bones
+        ? bestLeg({ hip: leg.hip, knee: leg.clean ? leg.knee : null, ankle: leg.ankle },
+                  bones, prev?.knee ?? leg.knee)
+        : (leg.clean ? { ...leg, repaired: false } : null);
+      /* A knee cannot teleport. Between two adjacent samples it moves a
+         fraction of a thigh; a jump of a whole thigh means the ends the
+         reconstruction trusted were not the rider's after all. */
+      const jumped = !!bones && !!prev && r.t - prev.t <= 1.5 / fps &&
+        movedTooFar(prev.knee, best?.knee, bones.femur * SANITY.kneeStepOverFemur);
+      if (!best || jumped) { tally.dropped++; continue; }
+      if (best.repaired) tally.rebuilt++; else tally.measured++;
+      last[s] = { knee: best.knee, t: r.t };
+      held[s] = best;
+    }
+
+    /* Which leg is which, by screen position rather than the model's own
+       left/right labels — facing the camera it swaps those readily, and a
+       swap moves one leg's lean into the other leg's series. A rider faces
+       us, so the leg on the left of frame is their right.
+       Mid-frame is half the SQUARED width, not 0.5: x has been multiplied by
+       the aspect ratio, so on portrait video the centre line sits nearer
+       0.28 — and a lone visible leg anywhere in between was being credited
+       to the wrong side of the body. */
+    const shown = LEGS.filter((s) => held[s]);
+    const leftMost = shown.length === 2 ? (held.l.knee.x <= held.r.knee.x ? "l" : "r") : null;
+    const raw = (j) => ({ x: +(j.x / r.ar).toFixed(4), y: +j.y.toFixed(4) });
+    for (const s of shown) {
+      const onScreenLeft = leftMost ? s === leftMost : held[s].knee.x < r.ar / 2;
+      const lean = fromVertical(held[s].knee, held[s].ankle, !onScreenLeft);
+      // A knee does not leave vertical by this much, however it was arrived at.
+      if (Math.abs(lean) > SANITY.kneeLeanDeg) continue;
+      r[onScreenLeft ? "right" : "left"] = lean;
+      if (held[s].repaired) r.rebuilt = true;
+      /* Raw image coordinates travel with the row so the player can replay
+         this clip with the same lines drawn on it — including the thigh,
+         which is the part the reconstruction is responsible for and so the
+         part worth being able to look at. */
+      r.j[`${s}hip`] = raw(held[s].hip);
+      r.j[`${s}knee`] = raw(held[s].knee);
+      r.j[`${s}ankle`] = raw(held[s].ankle);
+    }
+    if (!Object.keys(r.j).length) r.j = null;
+  }
+  return bones;
+}
+
+/* FRONT VIEW — the clip-level pass: sample the frames, settle the linkage,
+   then report knee travel and left/right evenness from what survived. */
 export async function analyzeFrontClip(blob, trim, onProgress) {
   /* The frame worth showing from the front is the one where a knee is furthest
      from vertical — the moment the number is describing. Captioned as the
      extreme it is, not as a typical stroke. */
   const frontStill = async (video, lm, rows) => {
+    const bones = settleFrontLegs(rows);
     const lean = (r) => Math.max(Math.abs(r.left ?? 0), Math.abs(r.right ?? 0));
-    const ranked = rows.map((_, i) => i).sort((a, b) => lean(rows[b]) - lean(rows[a]));
+    const ranked = rows.map((_, i) => i).filter((i) => rows[i].j)
+      .sort((a, b) => lean(rows[b]) - lean(rows[a]));
+    if (!ranked.length) return null;
     const worst = ranked[0];
-    const shot = await bestStill(video, lm, ranked.map((i) => rows[i].t), (ctx, p, w, h) => {
-      const seen = (i) => SEEN(p[i]);
-      // The same anatomy check the measurement uses, so the still can never
-      // draw a "leg" the numbers already rejected.
-      const pairs = [[25, 27], [26, 28]].filter(([k, a]) =>
-        seen(k) && seen(a) && p[k].y > (k === 25 ? p[23] : p[24]).y && p[a].y > p[k].y);
-      if (!pairs.length) return false;
-      for (const [k, a] of pairs) {
-        plumb(ctx, { x: p[a].x, y: p[a].y }, { x: p[a].x, y: p[k].y }, "#9C9A93", w, h);
-        limb(ctx, [p[k], p[a]], OUT_OF_BAND, w, h);
+    const shot = await bestStill(video, lm, ranked.map((i) => rows[i].t), (ctx, p, w, h, at) => {
+      /* The picture goes through the same linkage as the numbers, on this
+         frame's own landmarks — so a knee the measurement rebuilt is the knee
+         the still draws, and the two cannot disagree about the same frame. */
+      const ar = w / h;
+      const legs = frontLegs(p, squareUp(ar));
+      const un = (j) => ({ x: j.x / ar, y: j.y });
+      // The settled row at this moment, to hint which way the knee bends.
+      const near = rows.reduce((b, r) => (r.j && Math.abs(r.t - at) < Math.abs(b.t - at) ? r : b), rows[worst]);
+      const drew = [];
+      for (const s of LEGS) {
+        if (!legs[s].ends) continue;
+        const settled = near.j?.[`${s}knee`];
+        const hint = settled ? { x: settled.x * ar, y: settled.y } : legs[s].knee;
+        const best = bones
+          ? bestLeg({ hip: legs[s].hip, knee: legs[s].clean ? legs[s].knee : null, ankle: legs[s].ankle }, bones, hint)
+          : (legs[s].clean ? legs[s] : null);
+        if (!best) continue;
+        const hip = un(best.hip), knee = un(best.knee), ankle = un(best.ankle);
+        plumb(ctx, ankle, { x: ankle.x, y: knee.y }, "#9C9A93", w, h);
+        limb(ctx, [hip, knee, ankle], OUT_OF_BAND, w, h);
+        drew.push(hip, knee, ankle);
       }
-      const [k] = pairs[0];
-      tag(ctx, `${lean(rows[worst]).toFixed(0)}\u00b0`, p[k], OUT_OF_BAND, w, h);
-      return pairs.flatMap(([kk, aa]) => [p[kk], p[aa]]);
+      if (!drew.length) return false;
+      tag(ctx, `${lean(rows[worst]).toFixed(0)}°`, drew[1], OUT_OF_BAND, w, h);
+      return drew;
     }, null);
     return shot.fail ? null : {
       knees: { ...shot,
@@ -666,64 +798,29 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
            instant; the card reports how far it SWINGS across a whole stroke.
            Printing one number under the other without saying which is which is
            how a card came to read 22 degrees above a picture saying 52. */
-        caption: `The furthest your knee sat from vertical in this clip — ${lean(rows[worst]).toFixed(0)}\u00b0 at this instant. The card above is how far it swings across a whole stroke. Dashed lines run straight up from each ankle.` },
+        caption: `The furthest your knee sat from vertical in this clip — ${lean(rows[worst]).toFixed(0)}° at this instant. The card above is how far it swings across a whole stroke. Dashed lines run straight up from each ankle.` },
     };
   };
 
-  const rows = await sampleFrames(blob, trim, onProgress, 12, 40, (p, sq, t) => {
+  /* Pass one keeps joints and decides nothing. Bone lengths can only be taken
+     once the whole clip has been seen, and every frame's verdict needs them. */
+  const rows = await sampleFrames(blob, trim, onProgress, FRONT_FPS, 40, (p, sq, t) => {
     /* Each leg stands on its own. Requiring both at once threw the whole frame
        away whenever the far ankle passed behind the cranks — which is most of
        the stroke — and one measured leg is still worth saying. */
-    const vis = (i) => (p[i].visibility ?? 1) >= CAPTURE.minJointVisibility;
-    const row = { vis: mean([25, 26, 27, 28].map((i) => p[i].visibility ?? 1)) };
-    /* Which leg is which, decided by screen position rather than by the
-       model's own left/right labels — facing the camera it swaps those
-       readily, and a swap moves one leg's lean into the other leg's series.
-       A rider faces us, so the leg on the left of frame is their right. */
-    /* Visibility is not enough. The model reports a confident-looking score
-       for a badly placed joint, and from the front — with the bars and the
-       frame across the legs — it puts "knee" and "ankle" on a forearm often
-       enough to matter. A seated rider's knee is always below their hip and
-       their ankle always below their knee; a pair that fails that is not a
-       leg, whatever the model called it. */
-    const isLeg = (k, a) => {
-      const hip = k === 25 ? p[23] : p[24];
-      return vis(k) && vis(a) && p[k].y > hip.y && p[a].y > p[k].y;
-    };
-    const legs = [[25, 27], [26, 28]].filter(([k, a]) => isLeg(k, a));
-    if (legs.length === 2 && sq(p[legs[0][0]]).x > sq(p[legs[1][0]]).x) legs.reverse();
-    for (const [n, [k, a]] of legs.entries()) {
-      // screen-left leg first: that is the rider's right
-      const onScreenLeft = legs.length === 2 ? n === 0 : sq(p[k]).x < 0.5;
-      const lean = fromVertical(sq(p[k]), sq(p[a]), !onScreenLeft);
-      // A knee does not leave vertical by this much; the model lost the joint.
-      if (Math.abs(lean) > SANITY.kneeLeanDeg) continue;
-      row[onScreenLeft ? "right" : "left"] = lean;
-    }
-    if (row.left == null && row.right == null) return null;
-    /* Raw image coordinates travel with the row so the report can replay this
-       clip with the same lines drawn on it. Without them, switching the player
-       to the front view would show video with nothing marked — which is the
-       one thing the front view exists to show. */
-    /* Only the legs that passed. This carried all four landmarks whatever the
-       anatomy check decided, so the player happily drew a "shin" along a
-       forearm while the numbers were correctly ignoring it — the measurement
-       and the picture disagreeing about the same frame. */
-    const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
-    row.t = t;
-    row.j = {};
-    for (const [k, a] of legs) {
-      const side = k === 25 ? "l" : "r";
-      row.j[`${side}knee`] = xy(p[k]);
-      row.j[`${side}ankle`] = xy(p[a]);
-    }
-    return row;
+    const legs = frontLegs(p, sq);
+    if (!legs.l.ends && !legs.r.ends) return null;
+    // sq multiplies x by the aspect ratio, so this recovers it for the trip back.
+    return { t, ar: sq({ x: 1, y: 0 }).x, legs,
+             vis: mean([25, 26, 27, 28].map((i) => p[i].visibility ?? 1)) };
   }, frontStill);
+  settleFrontLegs(rows);              // no still means the still hook never ran
 
-  const MIN = 12 * 2;                          // two seconds of a usable leg
+  const MIN = FRONT_FPS * 2;                         // two seconds of a usable leg
   const leftVals = rows.filter((r) => r.left != null).map((r) => r.left);
   const rightVals = rows.filter((r) => r.right != null).map((r) => r.right);
   const seen = { ...rows.stat, left: leftVals.length, right: rightVals.length,
+                 legs: rows.repair,
                  visibility: +mean(rows.length ? rows.map((r) => r.vis) : [0]).toFixed(2) };
   if (leftVals.length < MIN && rightVals.length < MIN)
     return { gate: "We couldn't hold either knee in view for long enough from the front. Frame both legs from the waist down, with the light in front of you, and film again.", seen };
@@ -732,6 +829,11 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
   const sane = (v, max) => (Number.isFinite(v) && Math.abs(v) <= max ? v : null);
 
   const out = { seen, kneeTravel: {}, trim, stills: rows.stills ?? null,
+                /* How each number was arrived at, in the report itself: a
+                   reading rebuilt through the linkage is honest, but it is not
+                   the same thing as one the model simply saw. */
+                rebuilt: rows.repair?.rebuilt ?? 0,
+                readings: (rows.repair?.rebuilt ?? 0) + (rows.repair?.measured ?? 0),
                 track: rows.filter((r) => r.j).map((r) => ({ t: r.t, j: r.j, left: r.left, right: r.right })) };
   if (leftVals.length >= MIN) out.kneeTravel.left = sane(+amplitude(leftVals).toFixed(1), SANITY.kneeTravelDeg);
   if (rightVals.length >= MIN) out.kneeTravel.right = sane(+amplitude(rightVals).toFixed(1), SANITY.kneeTravelDeg);

@@ -4,8 +4,8 @@
    page, which revalidates far more aggressively. The version badge shows both,
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
-export const VERSION = "v18";
-export const BUILD = "2026-08-29-v18";
+export const VERSION = "v19";
+export const BUILD = "2026-08-29-v19";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -144,6 +144,13 @@ export const SANITY = {
      A frame implying more than these is a frame the model got wrong, so it is
      dropped before it reaches an average or a still. */
   kneeLeanDeg: 35,       // one frame: knee out of vertical
+
+  /* Between two adjacent samples a knee travels a fraction of a thigh. A jump
+     of a whole thigh is not the rider moving — it is the model handing the
+     linkage a hip or an ankle that was not theirs, and a knee rebuilt from
+     those lands nowhere near the leg. Measured in femurs so it scales with
+     however far away the phone was. */
+  kneeStepOverFemur: 1.0,
   tiltDeg: 30,           // one frame: shoulder or hip line off level
 
   /* A line also needs two points that are genuinely apart. Bent over the bars,
