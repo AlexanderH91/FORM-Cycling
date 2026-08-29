@@ -4,8 +4,8 @@
    page, which revalidates far more aggressively. The version badge shows both,
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
-export const VERSION = "v13";
-export const BUILD = "2026-08-29-v13";
+export const VERSION = "v14";
+export const BUILD = "2026-08-29-v14";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -103,9 +103,22 @@ export const POSE_MODEL = {
   },
 };
 
-// How many strokes to re-read with the fine model. Each one costs a seek, and
-// seeking a MediaRecorder file has no index to help it.
-export const REFINE_STROKES = 12;
+/* How many strokes to re-read with the fine model. Every stroke, in practice:
+   each one that survives is another reading in the median, and the uncertainty
+   on that median falls with the square root of how many there are. */
+export const REFINE_STROKES = 40;
+
+/* The sweep samples at 15 fps, so the bottom of a pedal stroke can fall up to
+   33 ms either side of the frame that looked lowest. At 85 rpm the leg covers
+   real distance in 33 ms, and the knee angle we report is taken at whichever
+   frame we happened to land on — a sampling error, not a model error, and one
+   no better model would fix.
+
+   So around each stroke found by the sweep, the fine model looks again at
+   three times the resolution and keeps the frame where the ankle is genuinely
+   at its extreme. Five reads per stroke instead of one; the payoff is that the
+   bottom of the stroke is the actual bottom. */
+export const SUBFRAME = { steps: 2, divisor: 3 };
 
 /* How long to wait for the fine model before giving up on it. It is 30 MB, so
    this has to allow for a bad connection — but not indefinitely, because an

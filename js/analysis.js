@@ -1,4 +1,4 @@
-import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FINE_MODEL_TIMEOUT_MS,
+import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FINE_MODEL_TIMEOUT_MS, SUBFRAME,
          FEMUR_OVER_HEIGHT, AXLE_ALONG_FOOT } from "./config.js";
 
 /* On-device side-view analysis.
@@ -107,16 +107,24 @@ export function spread(idxs, budget) {
 
    Returns the offset in thigh-lengths, which needs no assumption about the
    rider at all; centimetres are added later only if their height is known. */
+/* The frames where the crank is horizontal and forward: the ankle is furthest
+   forward exactly then. Split out from the measurement so those frames can be
+   re-read with the accurate model before the measurement is taken — otherwise
+   the fore/aft card would be the one number in the report still coming from
+   the sweep. */
+export function threeOClock(rows, fps) {
+  const lean = median(rows.map((r) => r.x.sho - r.x.hip));
+  if (!Number.isFinite(lean) || Math.abs(lean) < 1e-3) return { forward: 0, three: [] };
+  const forward = Math.sign(lean);
+  const reach = rows.map((r) => forward * r.x.ankle);
+  const three = findPeaks(reach, fps * 0.45, 0.25)
+    .filter((i) => rows[i].conf >= CAPTURE.minJointVisibility);
+  return { forward, three };
+}
+
 export function kneeOverAxle(rows, fps) {
-    // Which way the bike points: on a rider reaching for the bars, the
-    // shoulders are ahead of the hips.
-    const lean = median(rows.map((r) => r.x.sho - r.x.hip));
-    if (!Number.isFinite(lean) || Math.abs(lean) < 1e-3) return null;
-    const forward = Math.sign(lean);
-    const reach = rows.map((r) => forward * r.x.ankle);
-    const three = findPeaks(reach, fps * 0.45, 0.25)
-      .filter((i) => rows[i].conf >= CAPTURE.minJointVisibility);
-    if (three.length < 3) return null;
+    const { forward, three } = threeOClock(rows, fps);
+    if (!forward || three.length < 3) return null;
 
     const offs = three.map((i) => {
       const j = rows[i].x;
@@ -828,45 +836,77 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      accuracy there is, because the cost scales with strokes rather than with
      clip length. Everything here is best-effort: a refinement that fails
      leaves the sweep's own numbers standing. */
-  async function refine(idxs, budget = REFINE_STROKES) {
-    const pick = spread(idxs, budget);
-    let fine;
+  /* One reading of one frame with the fine model. */
+  function readFrame(p, t) {
+    const raw = pickSide(p, side);
+    const hip = sq(raw.hip), knee = sq(raw.knee), ankle = sq(raw.ankle);
+    const sho = sq(raw.sho), heel = sq(raw.heel), toe = sq(raw.toe);
+    const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
+    return {
+      t,
+      j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
+      conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
+      kneeBend: 180 - angleAt(hip, knee, ankle),
+      hip: angleAt(sho, hip, knee),
+      torso: deg(Math.atan2(Math.abs(sho.y - hip.y), Math.abs(sho.x - hip.x) + 1e-9)),
+      toeDown: -deg(Math.atan2(heel.y - toe.y, Math.abs(toe.x - heel.x) + 1e-9)),
+      ankleY: ankle.y,
+      x: { hip: hip.x, knee: knee.x, ankle: ankle.x, sho: sho.x, heel: heel.x, toe: toe.x },
+      femur: Math.hypot(knee.x - hip.x, knee.y - hip.y),
+      refined: true,
+    };
+  }
+
+  async function loadFine() {
     const t0 = performance.now();
     try {
       /* 30 MB over a bad connection could otherwise leave the rider watching a
          progress bar forever. Time it out and keep the sweep's numbers — less
          precise beats never finishing. */
-      fine = await Promise.race([
+      const fine = await Promise.race([
         getFineLandmarker(),
         new Promise((_, rej) => setTimeout(() => rej(new Error("fine model timed out")), FINE_MODEL_TIMEOUT_MS)),
       ]);
-    } catch (e) { timing.fineModelError = e?.message ?? "could not load"; return 0; }
-    timing.modelLoadMs = Math.round(performance.now() - t0);
+      timing.modelLoadMs = Math.round(performance.now() - t0);
+      return fine;
+    } catch (e) { timing.fineModelError = e?.message ?? "could not load"; return null; }
+  }
+
+  async function detectAt(fine, t) {
+    if (!(await seekTo(video, t, 3000))) return null;
+    await paintedFrame(video, 400);
+    try { return fine.detect(video).landmarks?.[0] ?? null; } catch { return null; }
+  }
+
+  /* Re-read the strokes, and look either side of each one for where the ankle
+     actually reaches its extreme. `wantLow` is the bottom of the stroke, where
+     the ankle sits lowest on screen — y grows downward, so that is a maximum. */
+  async function refine(idxs, wantLow, from, to, budget = REFINE_STROKES, steps = SUBFRAME.steps) {
+    const pick = spread(idxs, budget);
+    const fine = await loadFine();
+    if (!fine) return 0;
     if (!(await seekTo(video, 0, 6000))) return 0;
+
     const t1 = performance.now();
-    let done = 0;
-    for (const i of pick) {
-      if (!(await seekTo(video, rows[i].t, 3000))) continue;
-      await paintedFrame(video, 400);
-      let p;
-      try { p = fine.detect(video).landmarks?.[0]; } catch { break; }
-      if (!p) continue;
-      const raw = pickSide(p, side);
-      const hip = sq(raw.hip), knee = sq(raw.knee), ankle = sq(raw.ankle);
-      const sho = sq(raw.sho), heel = sq(raw.heel), toe = sq(raw.toe);
-      const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
-      Object.assign(rows[i], {
-        j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
-        conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
-        kneeBend: 180 - angleAt(hip, knee, ankle),
-        hip: angleAt(sho, hip, knee),
-        toeDown: -deg(Math.atan2(heel.y - toe.y, Math.abs(toe.x - heel.x) + 1e-9)),
-        refined: true,
-      });
-      done++;
-      onProgress(88 + (4 * done) / pick.length);
+    const step = 1 / (FPS * SUBFRAME.divisor);
+    let done = 0, reads = 0;
+    for (const [n, i] of pick.entries()) {
+      let best = null;
+      for (let k = -steps; k <= steps; k++) {
+        const t = rows[i].t + k * step;
+        if (t < t0 || t > end) continue;
+        const p = await detectAt(fine, t);
+        reads++;
+        if (!p) continue;
+        const m = readFrame(p, t);
+        const better = !best || (wantLow ? m.ankleY > best.ankleY : m.ankleY < best.ankleY);
+        if (better) best = m;
+      }
+      if (best) { Object.assign(rows[i], best); done++; }
+      onProgress(from + ((to - from) * (n + 1)) / pick.length);
     }
-    timing.refineMs = Math.round(performance.now() - t1);
+    timing.refineMs = (timing.refineMs ?? 0) + Math.round(performance.now() - t1);
+    timing.fineReads = (timing.fineReads ?? 0) + reads;
     return done;
   }
 
@@ -883,9 +923,16 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
 
   /* Only now is it known which frames matter, which is the whole point: the
      accurate model is spent on those and nothing else. */
-  onProgress(88, `Re-reading those strokes with the accurate model\u2026`);
-  let refined = 0;
-  try { refined = await refine(bdc); } catch { /* the sweep's numbers still stand */ }
+  /* Both ends of the stroke get the accurate model now. The hip fold is taken
+     at the top and was being read by the sweep alone, which meant one card in
+     the report was measured to a different standard than the one above it. */
+  onProgress(88, "Re-reading the bottom of each stroke closely\u2026");
+  let refined = 0, refinedTop = 0;
+  try { refined = await refine(bdc, true, 88, 91); } catch { /* the sweep still stands */ }
+  if (refined && tdcIdx.length) {
+    onProgress(91, "And the top of each stroke\u2026");
+    try { refinedTop = await refine(tdcIdx, false, 91, 94); } catch { /* as above */ }
+  }
 
   /* SADDLE FORE/AFT — the gap every review of these apps points at.
      At the three o'clock crank position, fitters look at where the front of
@@ -895,6 +942,18 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      along the foot at AXLE_ALONG_FOOT, and the result is scaled to
      centimetres through the rider's thigh — both stated assumptions, which is
      why this reports a position and never a verdict. */
+  /* The three o'clock frames are neither the top nor the bottom of the stroke,
+     so nothing above has touched them. Re-read them plainly — the fore/aft
+     figure moves slowly through that part of the circle, so there is nothing
+     for a sub-frame search to find, but there is no reason for one card to be
+     measured by the smaller model when the rest are not. */
+  if (refined) {
+    const { three } = threeOClock(rows, FPS);
+    if (three.length) {
+      onProgress(94, "Re-reading the cranks-level frames\u2026");
+      try { await refine(three, true, 94, 95, REFINE_STROKES, 0); } catch { /* sweep stands */ }
+    }
+  }
   const foreaft = kneeOverAxle(rows, FPS);
   if (foreaft && heightCm > 0) {
     // One known length turns thigh-lengths into centimetres. The ratio is a
@@ -929,10 +988,11 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     return fine.length >= 5 ? fine : idxs.filter((i) => !rows[i].refined);
   };
   const bdcM = measured(bdc);
+  const tdcM = measured(tdcIdx);
   const allIdx = rows.map((_, i) => i);
   const kneeBDC = stat(bdcM, "kneeBend");
   const toeBDC = stat(bdcM, "toeDown");
-  const hipTDC = tdcIdx.length ? stat(tdcIdx, "hip") : null;
+  const hipTDC = tdcM.length ? stat(tdcM, "hip") : null;
   const torso = stat(allIdx, "torso");
   if (!kneeBDC) { release(); return { gate: "We saw you pedalling but never clearly enough at the bottom of the stroke to measure the knee. Move the phone to saddle height, 2–3 m out to the side, and film again.", capture }; }
 
@@ -1082,8 +1142,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     });
   }
 
-  if (hipTDC && tdcIdx.length) {
-    const tdcRanked = rankedBy(tdcIdx, "hip", hipTDC.value);
+  if (hipTDC && tdcM.length) {
+    const tdcRanked = rankedBy(tdcM, "hip", hipTDC.value);
     const tdcRow = tdcRanked[0];
     const hipColour = verdictFor(hipTDC, BANDS.hipTDC) === "ok" ? IN_BAND : OUT_OF_BAND;
     specs.push({
@@ -1189,7 +1249,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     leg: side === "L" ? "left" : "right",
     legFlips: flipped,
     // How many of the measured strokes were re-read with the accurate model.
-    refined: { strokes: refined, model: POSE_MODEL.fine, sweep: POSE_MODEL.sweep,
+    refined: { strokes: refined, top: refinedTop, model: POSE_MODEL.fine, sweep: POSE_MODEL.sweep,
                ...timing, totalMs: Math.round(performance.now() - analysisStart) },
     stillsFail,
     kneeBendBDC: { value: +kneeBDC.value.toFixed(1), sd: +kneeBDC.sd.toFixed(1),
