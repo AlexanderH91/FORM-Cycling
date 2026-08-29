@@ -473,14 +473,17 @@ export function drawReport(view, r, clips) {
     ${canPlay ? `
       <div class="sect">Your ride</div>
       <div class="glass player">
-        ${/* One player, three angles. Switching tabs is how a rider sees what
-              each camera position is actually for. */""}
-        <div class="angletabs" id="mvtabs"></div>
+        ${/* The angle switcher sits UNDER the footage with the other controls.
+              Above it, it read as a strip floating loose at the top of the
+              screen rather than part of the player — and it pushed the video
+              down for no reason. Video first, then everything you can do to
+              it, in one block. */""}
         <div class="stagewrap">
           <video id="mv" class="shot" playsinline muted loop preload="auto"></video>
           <canvas id="mvc"></canvas>
           <div class="mv-live mono"><span id="mvang">–</span></div>
         </div>
+        <div class="angletabs" id="mvtabs" role="tablist"></div>
         <div class="mv-bar">
           <button class="mv-play" id="mvplay" aria-label="Play">▶</button>
           <input id="mvseek" type="range" min="0" max="1000" value="0">

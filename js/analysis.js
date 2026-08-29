@@ -705,9 +705,18 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
        clip with the same lines drawn on it. Without them, switching the player
        to the front view would show video with nothing marked — which is the
        one thing the front view exists to show. */
+    /* Only the legs that passed. This carried all four landmarks whatever the
+       anatomy check decided, so the player happily drew a "shin" along a
+       forearm while the numbers were correctly ignoring it — the measurement
+       and the picture disagreeing about the same frame. */
     const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
     row.t = t;
-    row.j = { lknee: xy(p[25]), lankle: xy(p[27]), rknee: xy(p[26]), rankle: xy(p[28]) };
+    row.j = {};
+    for (const [k, a] of legs) {
+      const side = k === 25 ? "l" : "r";
+      row.j[`${side}knee`] = xy(p[k]);
+      row.j[`${side}ankle`] = xy(p[a]);
+    }
     return row;
   }, frontStill);
 
@@ -783,12 +792,27 @@ export async function analyzeRearClip(blob, trim, onProgress) {
     const level = (v) => (Number.isFinite(v) && Math.abs(v) <= SANITY.tiltDeg ? v : null);
     // Shoulders above hips, or the model has not found a rider on a bike.
     const upright = Math.min(p[11].y, p[12].y) < Math.min(p[23].y, p[24].y);
-    if (upright && vis(11) && vis(12)) row.shoulder = level(tilt(p[11], p[12]));
-    if (upright && vis(23) && vis(24)) row.pelvis = level(tilt(p[23], p[24]));
+
+    /* A line needs two points that are actually apart. Bent over the bars the
+       rider's own back hides their hips, and the model stacks both markers in
+       the middle of the torso — which drew a pair of tiny dumbbells on the
+       spine and called them a shoulder line and a hip line. Shoulder width is
+       the reference: hips are roughly two thirds of it on anyone. */
+    const across = (a, b) => Math.abs(sq(a).x - sq(b).x);
+    const shoulderW = across(p[11], p[12]);
+    const hipW = across(p[23], p[24]);
+    const wideEnough = shoulderW >= SANITY.minSpanOfFrame;
+
+    if (upright && wideEnough && vis(11) && vis(12)) row.shoulder = level(tilt(p[11], p[12]));
+    if (upright && wideEnough && vis(23) && vis(24) && hipW >= shoulderW * SANITY.hipOverShoulder)
+      row.pelvis = level(tilt(p[23], p[24]));
     if (row.shoulder == null && row.pelvis == null) return null;
     const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
     row.t = t;
-    row.j = { lsho: xy(p[11]), rsho: xy(p[12]), lhip: xy(p[23]), rhip: xy(p[24]) };
+    row.j = {};
+    if (row.shoulder != null) { row.j.lsho = xy(p[11]); row.j.rsho = xy(p[12]); }
+    if (row.pelvis != null) { row.j.lhip = xy(p[23]); row.j.rhip = xy(p[24]); }
+    if (!Object.keys(row.j).length) return null;
     return row;
   }, rearStill);
 

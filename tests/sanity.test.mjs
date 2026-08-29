@@ -126,5 +126,39 @@ T('the rear view checks shoulders sit above hips', anatomy.checksRear);
 T('and the front view no longer asks for the camera at bar height', anatomy.framingFixed,
   'bar height puts the bars across the very joints this view needs');
 
+/* The picture and the numbers must agree about the same frame. The front
+   track carried all four leg landmarks whatever the anatomy check decided, so
+   the player drew a shin along a forearm while the measurement was correctly
+   ignoring it. And from behind, a rider bent over the bars hides their own
+   hips: the model stacks both markers on the spine, and two points that close
+   together cannot define a line at all. */
+const tracks = await page.evaluate(async () => {
+  const C = await import('/js/config.js');
+  const src = await (await fetch('/js/analysis.js')).text();
+  const css = await (await fetch('/css/app.css')).text();
+  const pageSrc = await (await fetch('/js/pages/analyze.js')).text();
+
+  // where the tabs sit in the player markup
+  const stage = pageSrc.indexOf('<div class="stagewrap">');
+  const tabs = pageSrc.indexOf('id="mvtabs"');
+  return {
+    frontTrackFiltered: /for \(const \[k, a\] of legs\) \{/.test(src)
+      && !/row\.j = \{ lknee: xy\(p\[25\]\)/.test(src),
+    rearTrackFiltered: /if \(row\.shoulder != null\) \{ row\.j\.lsho/.test(src),
+    spanChecked: /shoulderW >= SANITY\.minSpanOfFrame/.test(src)
+      && /hipW >= shoulderW \* SANITY\.hipOverShoulder/.test(src),
+    span: C.SANITY.minSpanOfFrame, hipRatio: C.SANITY.hipOverShoulder,
+    tabsBelowVideo: tabs > stage,
+    segmented: /\.angletabs\{[^}]*padding:3px/.test(css),
+  };
+});
+T('the front track carries only legs that passed the anatomy check',
+  tracks.frontTrackFiltered, 'the player can no longer draw what the numbers rejected');
+T('the rear track carries only lines that were measurable', tracks.rearTrackFiltered);
+T('a torso too narrow to measure is refused', tracks.spanChecked,
+  `shoulders must span ${tracks.span} of frame, hips ${tracks.hipRatio} of shoulders`);
+T('the angle switcher sits under the footage, not above it', tracks.tabsBelowVideo);
+T('and reads as one segmented control', tracks.segmented);
+
 await b.close();
 finish();

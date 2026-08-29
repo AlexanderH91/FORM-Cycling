@@ -4,8 +4,8 @@
    page, which revalidates far more aggressively. The version badge shows both,
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
-export const VERSION = "v17";
-export const BUILD = "2026-08-29-v17";
+export const VERSION = "v18";
+export const BUILD = "2026-08-29-v18";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -145,6 +145,13 @@ export const SANITY = {
      dropped before it reaches an average or a still. */
   kneeLeanDeg: 35,       // one frame: knee out of vertical
   tiltDeg: 30,           // one frame: shoulder or hip line off level
+
+  /* A line also needs two points that are genuinely apart. Bent over the bars,
+     a rider's own back hides their hips and the model stacks both markers on
+     the spine — close enough together that the angle between them is noise,
+     even when it happens to come out small. */
+  minSpanOfFrame: 0.06,  // shoulders must span at least this much of the frame
+  hipOverShoulder: 0.45, // hips are never narrower than this share of shoulders
 };
 
 export const MAX_RECORD_MS = 10 * 60 * 1000; // 10 minutes
