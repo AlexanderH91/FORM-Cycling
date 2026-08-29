@@ -453,10 +453,17 @@ function gradeCapture(frames) {
   const ratio = med(frames.hipSpread);
   const offSquareDeg = +(deg(Math.asin(Math.min(1, ratio / CAPTURE.hipWidthOverTrunk)))).toFixed(0);
 
+  /* A refusal carries the counts that caused it. Without them the rider is
+     told to reframe a shot that may have been framed perfectly, and we cannot
+     tell a badly-filmed clip from a clip this phone would not decode. */
+  const counted = { sampled: frames.sampled, found: frames.seen,
+                    detection: +detection.toFixed(2), visibility: +visibility.toFixed(2) };
   if (detection < CAPTURE.minDetection)
-    return { grade: "F", reason: "We could only find you in part of the clip. Get the whole bike and rider in frame, in decent light, and film again." };
+    return { grade: "F", ...counted,
+      reason: `We could only find you in ${frames.seen} of the ${frames.sampled} frames we looked at. Get the whole bike and rider in frame, in decent light, and film again.` };
   if (visibility < CAPTURE.minVisibility)
-    return { grade: "F", reason: "Your hip, knee and ankle were never clearly visible. Move the phone to saddle height, 2–3 m away, and film again." };
+    return { grade: "F", ...counted,
+      reason: "We found you, but your hip, knee and ankle were never clearly enough in view to measure. Move the phone to saddle height, 2–3 m away, and film again." };
 
   /* The squareness estimate is not trusted enough to suppress a measurement
      yet: it read 21° on footage with 99% detection and 92% visibility, which
@@ -552,6 +559,7 @@ async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read, afte
         continue;
       }
       missed = 0;
+      await paintedFrame(video, 250);      // see analyzeSideClip: a seek is not a frame
       const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
       // The frame's own time, not the time we asked to seek to — the overlay
       // rides on this, and a request is not a position.
@@ -971,6 +979,15 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       continue;
     }
     missedSeeks = 0;
+    /* Wait for the frame to actually be presented before reading it.
+       "seeked" fires when the seek completed, not when the new frame exists —
+       see paintedFrame above — so a detect() in that gap is handed the
+       previous frame or nothing at all. Nothing found means no pose, and
+       enough of those in a row drop the detection rate below the floor and
+       gate the whole clip with a message blaming the rider's framing. The
+       accurate re-read pass has always waited; the sweep that decides whether
+       there is anything to re-read did not. */
+    await paintedFrame(video, 250);
     const res = lm.detectForVideo(video, performance.now());
     const p = res.landmarks?.[0];
     frames.sampled++;

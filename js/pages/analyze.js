@@ -547,6 +547,13 @@ export function drawReport(view, r, clips) {
     <a class="btn secondary coach-cta" href="#/coach?about=report">
       <span class="cmic"></span>Talk about this ride</a>
     <a class="btn" href="#/home">Done</a>`}
+  ${/* A refused read gets a refused read's footnote. This line used to sit
+        outside the branch above, so a screen headed "we couldn't trust this
+        read" went straight on to say "analyzed on your phone across – pedal
+        strokes" and to suggest filming the other two angles — the app
+        contradicting itself, and advice pointing away from the thing that
+        actually needs refilming. */""}
+  ${r.gate ? `<div class="footnote">Nothing was measured from this clip · build ${BUILD} · the video never left your phone</div>` : `
   <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes${
     r.capture?.offSquareDeg != null ? ` · camera about ${r.capture.offSquareDeg}° off square` : ""} · build ${BUILD} · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}
     ${/* What the accurate model cost, in seconds, on this phone. Reported
@@ -560,7 +567,7 @@ export function drawReport(view, r, clips) {
         : `read with the ${r.refined.sweep} model only${r.refined.fineModelError ? ` — ${r.refined.fineModelError}` : ""}`}${
       r.refined.modelLoadMs != null ? ` · model loaded in ${(r.refined.modelLoadMs / 1000).toFixed(1)}s` : ""}${
       r.refined.refineMs != null ? ` · re-read took ${(r.refined.refineMs / 1000).toFixed(1)}s` : ""}${
-      r.refined.totalMs != null ? ` · ${(r.refined.totalMs / 1000).toFixed(1)}s in total` : ""}` : ""}</div>`;
+      r.refined.totalMs != null ? ` · ${(r.refined.totalMs / 1000).toFixed(1)}s in total` : ""}` : ""}</div>`}`;
   const made = view.querySelector("#madeit");
   if (made) made.onclick = async () => {
     made.disabled = true;
