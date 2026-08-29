@@ -51,7 +51,19 @@ T('FORM label is black', s.label === 'rgb(11, 11, 11)', s.label);
   T('the icon has an arc and a ring', !!arc && !!ring, arc ?? 'no arc found');
   T('the in-app mark is the same geometry', ui.includes(arc) && ui.includes(ring));
   T('and so is the copy inlined in the nav', html.includes(arc) && html.includes(ring));
-  T('no word is baked into the icon', !/<text/.test(icon), 'iOS writes the name underneath');
+  /* The word belongs on the home-screen tile — it is asked for, and the tile
+     is where the sport gets named. What it must not do is shrink the mark: the
+     first version put a big bold word in the middle and left the arc half its
+     size, which is what made the icon look amateur next to Golf's. */
+  T('the icon names the sport', /<text[^>]*>cycling<\/text>/.test(icon));
+  const scale = parseFloat(icon.match(/scale\(([\d.]+)\)/)?.[1] ?? '0');
+  T('and the mark keeps its size anyway', scale > 1.3,
+    `mark scaled ${scale} — the word costs it under a tenth of its height`);
+  const font = parseFloat(icon.match(/font-size="([\d.]+)"/)?.[1] ?? '99');
+  T('the word is a caption, not a partner', font < 13 && /font-weight="500"/.test(icon),
+    `${font}px, weight 500`);
+  T('the in-app mark carries no word — the nav already says FORM',
+    !/<text/.test(ui) && !/<text/.test(html.slice(html.indexOf('class="disc"'), html.indexOf('</nav>'))));
   T('the starburst is gone everywhere', ![icon, ui, html].some((f) => /class="burst"/.test(f)));
 }
 
