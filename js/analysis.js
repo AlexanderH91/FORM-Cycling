@@ -659,7 +659,11 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
     }, null);
     return shot.fail ? null : {
       knees: { ...shot,
-        caption: `The most your knee left vertical in this clip — ${lean(rows[worst]).toFixed(0)}\u00b0. The dashed lines run straight up from each ankle.` },
+        /* Say how this frame relates to the card. One frame shows a knee at an
+           instant; the card reports how far it SWINGS across a whole stroke.
+           Printing one number under the other without saying which is which is
+           how a card came to read 22 degrees above a picture saying 52. */
+        caption: `The furthest your knee sat from vertical in this clip — ${lean(rows[worst]).toFixed(0)}\u00b0 at this instant. The card above is how far it swings across a whole stroke. Dashed lines run straight up from each ankle.` },
     };
   };
 
@@ -679,6 +683,8 @@ export async function analyzeFrontClip(blob, trim, onProgress) {
       // screen-left leg first: that is the rider's right
       const onScreenLeft = legs.length === 2 ? n === 0 : sq(p[k]).x < 0.5;
       const lean = fromVertical(sq(p[k]), sq(p[a]), !onScreenLeft);
+      // A knee does not leave vertical by this much; the model lost the joint.
+      if (Math.abs(lean) > SANITY.kneeLeanDeg) continue;
       row[onScreenLeft ? "right" : "left"] = lean;
     }
     if (row.left == null && row.right == null) return null;
@@ -742,7 +748,7 @@ export async function analyzeRearClip(blob, trim, onProgress) {
     }, null);
     return shot.fail ? null : {
       body: { ...shot,
-        caption: `The most tilted frame in this clip — ${tilt(rows[worst]).toFixed(0)}\u00b0 off level. The dashed lines are level for comparison.` },
+        caption: `The most tilted frame in this clip — ${tilt(rows[worst]).toFixed(0)}\u00b0 off level at this instant. The card above is how much the tilt changes across a whole stroke. Dashed lines are level for comparison.` },
     };
   };
 
@@ -761,8 +767,9 @@ export async function analyzeRearClip(blob, trim, onProgress) {
       return deg(Math.atan2(r.y - l.y, Math.abs(r.x - l.x) + 1e-9));
     };
     const row = { vis: mean([11, 12, 23, 24].map((i) => p[i].visibility ?? 1)) };
-    if (vis(11) && vis(12)) row.shoulder = tilt(p[11], p[12]);
-    if (vis(23) && vis(24)) row.pelvis = tilt(p[23], p[24]);
+    const level = (v) => (Number.isFinite(v) && Math.abs(v) <= SANITY.tiltDeg ? v : null);
+    if (vis(11) && vis(12)) row.shoulder = level(tilt(p[11], p[12]));
+    if (vis(23) && vis(24)) row.pelvis = level(tilt(p[23], p[24]));
     if (row.shoulder == null && row.pelvis == null) return null;
     const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
     row.t = t;

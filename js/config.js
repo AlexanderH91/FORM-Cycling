@@ -4,8 +4,8 @@
    page, which revalidates far more aggressively. The version badge shows both,
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
-export const VERSION = "v15";
-export const BUILD = "2026-08-29-v15";
+export const VERSION = "v16";
+export const BUILD = "2026-08-29-v16";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -132,8 +132,19 @@ export const FINE_MODEL_TIMEOUT_MS = 45_000;
    given against them: they are the line past which FORM says it could not
    measure rather than reporting a number it cannot possibly mean. */
 export const SANITY = {
-  kneeTravelDeg: 30,     // side-to-side knee travel across a stroke
-  rockDeg: 25,           // shoulder or pelvis tilt from level
+  kneeTravelDeg: 30,     // side-to-side knee travel across a whole stroke
+  rockDeg: 25,           // shoulder or pelvis tilt from level, across a stroke
+
+  /* The same discipline one frame at a time. An angle between two points the
+     model has placed almost on top of each other is not a large angle, it is
+     an undefined one — and atan2 returns something near 90 degrees for it
+     rather than nothing. That is where "82 degrees off level" came from: two
+     hip markers with no horizontal separation between them.
+
+     A frame implying more than these is a frame the model got wrong, so it is
+     dropped before it reaches an average or a still. */
+  kneeLeanDeg: 35,       // one frame: knee out of vertical
+  tiltDeg: 30,           // one frame: shoulder or hip line off level
 };
 
 export const MAX_RECORD_MS = 10 * 60 * 1000; // 10 minutes

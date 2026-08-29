@@ -72,5 +72,30 @@ T('the figures actually shipped to the rider would now be refused',
   '71.3° / 127.6° / 171.4° all gated');
 T('while a plausible reading still gets through',
   wouldGate.knee[3] === 6.2 && wouldGate.rock[3] === 4.1, '6.2° travel, 4.1° rock');
+/* The ceiling has to bite one frame at a time, not only on the average. A card
+   reading 22 degrees above a picture captioned 52 was two numbers from the same
+   measurement disagreeing in public. */
+const perFrame = await page.evaluate(async () => {
+  const C = await import('/js/config.js');
+  const src = await (await fetch('/js/analysis.js')).text();
+  // an angle between two points the model put on top of each other
+  const deg = (r) => (r * 180) / Math.PI;
+  const nearlyCoincident = deg(Math.atan2(0.02, 0.0008));   // dx ~ 0
+  return {
+    frameCeilings: { knee: C.SANITY.kneeLeanDeg, tilt: C.SANITY.tiltDeg },
+    coincidentAngle: +nearlyCoincident.toFixed(1),
+    dropsFrontFrame: /if \(Math\.abs\(lean\) > SANITY\.kneeLeanDeg\) continue;/.test(src),
+    dropsRearFrame: /Math\.abs\(v\) <= SANITY\.tiltDeg \? v : null/.test(src),
+    captionSaysWhich: /The card above is how far it swings across a whole stroke/.test(src),
+  };
+});
+T('two markers with no separation between them make a near-90 degree angle',
+  perFrame.coincidentAngle > 85, `${perFrame.coincidentAngle}° from a 0.0008 gap — this is where 82° came from`);
+T('such a frame is dropped before it reaches an average',
+  perFrame.dropsFrontFrame && perFrame.dropsRearFrame,
+  `per frame: knee ${perFrame.frameCeilings.knee}°, tilt ${perFrame.frameCeilings.tilt}°`);
+T('and the still says how its number relates to the card\'s', perFrame.captionSaysWhich,
+  'one instant versus the swing across a stroke');
+
 await b.close();
 finish();
