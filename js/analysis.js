@@ -1,4 +1,5 @@
-import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FEMUR_OVER_HEIGHT, AXLE_ALONG_FOOT } from "./config.js";
+import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FINE_MODEL_TIMEOUT_MS,
+         FEMUR_OVER_HEIGHT, AXLE_ALONG_FOOT } from "./config.js";
 
 /* On-device side-view analysis.
    MediaPipe Pose Landmarker (WASM) runs in the browser; the video never
@@ -735,6 +736,7 @@ export async function analyzeRearClip(blob, trim, onProgress) {
 
 export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   const { history = [], heightCm = null } = opts;
+  const analysisStart = performance.now();
   onProgress(3, "Loading the pose model onto your phone…");
   const lm = await getLandmarker();
 
@@ -829,8 +831,19 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   async function refine(idxs, budget = REFINE_STROKES) {
     const pick = spread(idxs, budget);
     let fine;
-    try { fine = await getFineLandmarker(); } catch { return 0; }
+    const t0 = performance.now();
+    try {
+      /* 30 MB over a bad connection could otherwise leave the rider watching a
+         progress bar forever. Time it out and keep the sweep's numbers — less
+         precise beats never finishing. */
+      fine = await Promise.race([
+        getFineLandmarker(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("fine model timed out")), FINE_MODEL_TIMEOUT_MS)),
+      ]);
+    } catch (e) { timing.fineModelError = e?.message ?? "could not load"; return 0; }
+    timing.modelLoadMs = Math.round(performance.now() - t0);
     if (!(await seekTo(video, 0, 6000))) return 0;
+    const t1 = performance.now();
     let done = 0;
     for (const i of pick) {
       if (!(await seekTo(video, rows[i].t, 3000))) continue;
@@ -853,8 +866,14 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       done++;
       onProgress(88 + (4 * done) / pick.length);
     }
+    timing.refineMs = Math.round(performance.now() - t1);
     return done;
   }
+
+  /* What this actually cost, in milliseconds, reported with the read. The
+     whole point of moving to the heavy model was to find out what it costs on
+     a real phone, and that is not answerable from a feeling. */
+  const timing = { startedAt: analysisStart };
 
   onProgress(87, "Finding the bottom of each stroke…");
   const ay = rows.map((r) => r.ankleY);
@@ -864,7 +883,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
 
   /* Only now is it known which frames matter, which is the whole point: the
      accurate model is spent on those and nothing else. */
-  onProgress(88, "Re-reading those strokes closely…");
+  onProgress(88, `Re-reading those strokes with the accurate model\u2026`);
   let refined = 0;
   try { refined = await refine(bdc); } catch { /* the sweep's numbers still stand */ }
 
@@ -1170,7 +1189,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     leg: side === "L" ? "left" : "right",
     legFlips: flipped,
     // How many of the measured strokes were re-read with the accurate model.
-    refined: { strokes: refined, model: POSE_MODEL.fine, sweep: POSE_MODEL.sweep },
+    refined: { strokes: refined, model: POSE_MODEL.fine, sweep: POSE_MODEL.sweep,
+               ...timing, totalMs: Math.round(performance.now() - analysisStart) },
     stillsFail,
     kneeBendBDC: { value: +kneeBDC.value.toFixed(1), sd: +kneeBDC.sd.toFixed(1),
                    strokes: kneeBDC.n, of: kneeBDC.of, centre: "median",

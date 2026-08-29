@@ -4,8 +4,8 @@
    page, which revalidates far more aggressively. The version badge shows both,
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
-export const VERSION = "v11";
-export const BUILD = "2026-08-29-v11";
+export const VERSION = "v12";
+export const BUILD = "2026-08-29-v12";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -83,12 +83,14 @@ export const SETTLE_RIDES = 3;
    The fine model then re-reads the handful of frames the reported number is
    actually computed from, where accuracy is the only thing that matters.
 
-   `heavy` is the most accurate of the three and is one word away, but it is
-   30 MB against full's 9.4 MB — a download a rider on cellular pays for in the
-   middle of an analysis. Move to it once the model is cached locally. */
+   The fine model is `heavy`: the most accurate of the three, and 30 MB against
+   full's 9.4 MB. That download happens once — the service worker caches it —
+   and it is spent on the dozen frames a reported number actually comes from,
+   not on every frame of the clip. If it will not arrive, the sweep's own
+   numbers stand and the report says which model produced them. */
 export const POSE_MODEL = {
   sweep: "lite",
-  fine: "full",
+  fine: "heavy",
   /* The sweep model ships with the app. It used to be fetched from Google's
      CDN at the moment analysis started, which meant a rider in a garage on one
      bar of signal got "analysis failed" for a clip that was already on their
@@ -104,6 +106,11 @@ export const POSE_MODEL = {
 // How many strokes to re-read with the fine model. Each one costs a seek, and
 // seeking a MediaRecorder file has no index to help it.
 export const REFINE_STROKES = 12;
+
+/* How long to wait for the fine model before giving up on it. It is 30 MB, so
+   this has to allow for a bad connection — but not indefinitely, because an
+   analysis that hangs is worse than one that is slightly less precise. */
+export const FINE_MODEL_TIMEOUT_MS = 45_000;
 
 export const MAX_RECORD_MS = 10 * 60 * 1000; // 10 minutes
 

@@ -535,7 +535,17 @@ export function drawReport(view, r, clips) {
       <span class="cmic"></span>Talk about this ride</a>
     <a class="btn" href="#/home">Done</a>`}
   <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes${
-    r.capture?.offSquareDeg != null ? ` · camera about ${r.capture.offSquareDeg}° off square` : ""} · build ${BUILD} · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}</div>`;
+    r.capture?.offSquareDeg != null ? ` · camera about ${r.capture.offSquareDeg}° off square` : ""} · build ${BUILD} · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}
+    ${/* What the accurate model cost, in seconds, on this phone. Reported
+          because "does heavy take too long?" is a question with an answer, and
+          a rider on a slow connection deserves to see where the time went. */""}
+    ${r.refined ? `<br>${
+      r.refined.strokes
+        ? `${r.refined.strokes} strokes re-read with the ${r.refined.model} model`
+        : `read with the ${r.refined.sweep} model only${r.refined.fineModelError ? ` — ${r.refined.fineModelError}` : ""}`}${
+      r.refined.modelLoadMs != null ? ` · model loaded in ${(r.refined.modelLoadMs / 1000).toFixed(1)}s` : ""}${
+      r.refined.refineMs != null ? ` · re-read took ${(r.refined.refineMs / 1000).toFixed(1)}s` : ""}${
+      r.refined.totalMs != null ? ` · ${(r.refined.totalMs / 1000).toFixed(1)}s in total` : ""}` : ""}</div>`;
   const made = view.querySelector("#madeit");
   if (made) made.onclick = async () => {
     made.disabled = true;
