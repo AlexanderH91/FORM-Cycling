@@ -1,9 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!-- Matched to FORM Golf's icon discipline: one mark, no word, a confident
+       stroke, generous margins. The sport is said by the ground colour and the
+       shape at the tip, not by a label — iOS already writes "FORM Cycling"
+       underneath, so a word inside the tile said it twice and cost the mark
+       half its size. Placement is solved from the ink's real bounding box,
+       stroke included, rather than eyeballed. The arc stops under the ring's
+       solid annulus so its round cap cannot fill the hole. -->
   <rect width="128" height="128" rx="28" fill="#F2C230"/>
-  <g id="mark" transform="translate(28.94 16.03) scale(1.5936)">
-    <path d="M6 40C8 21 17 10 30 10" fill="none" stroke="#0B0B0B" stroke-width="5.5"/>
-    <path d="M30.38 6.91 L30.82 5.12 L33.18 5.12 L33.62 6.91 L34.19 7.18 L35.87 6.41 L37.33 8.25 L36.21 9.72 L36.35 10.33 L38.00 11.16 L37.47 13.46 L35.63 13.49 L35.23 13.98 L35.61 15.79 L33.49 16.81 L32.32 15.39 L31.68 15.39 L30.51 16.81 L28.39 15.79 L28.77 13.98 L28.37 13.49 L26.53 13.46 L26.00 11.16 L27.65 10.33 L27.79 9.72 L26.67 8.25 L28.13 6.41 L29.81 7.18 Z M34.00 11.00 A2.0 2.0 0 1 0 30.00 11.00 A2.0 2.0 0 1 0 34.00 11.00 Z" fill="#0B0B0B" fill-rule="evenodd"/>
+  <g id="mark" transform="translate(27.28 32.11) scale(1.5247)">
+    <path d="M5.5 43C7.5 20 14 7.5 24.66 7.5" fill="none" stroke="#0B0B0B" stroke-width="6.2" stroke-linecap="round"/>
+    <path d="M30.70 -2.02 L31.66 -4.27 L36.34 -4.27 L37.30 -2.02 L38.40 -1.57 L40.67 -2.48 L43.98 0.83 L43.07 3.10 L43.52 4.20 L45.77 5.16 L45.77 9.84 L43.52 10.80 L43.07 11.90 L43.98 14.17 L40.67 17.48 L38.40 16.57 L37.30 17.02 L36.34 19.27 L31.66 19.27 L30.70 17.02 L29.60 16.57 L27.33 17.48 L24.02 14.17 L24.93 11.90 L24.48 10.80 L22.23 9.84 L22.23 5.16 L24.48 4.20 L24.93 3.10 L24.02 0.83 L27.33 -2.48 L29.60 -1.57 Z M39.64 7.50 A5.64 5.64 0 1 0 28.36 7.50 A5.64 5.64 0 1 0 39.64 7.50 Z" fill="#0B0B0B" fill-rule="evenodd"/>
   </g>
-  <text id="word" x="64" y="100.8" text-anchor="middle" fill="#0B0B0B"
-        font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="15.7" font-weight="600" letter-spacing="0.6">cycling</text>
 </svg>

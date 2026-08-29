@@ -1,11 +1,18 @@
-/* Shared FORM shell pieces. The mark is the FORM arc with the sport's badge at
-   its tip: a gold burst carrying a black chainring. Arc takes currentColor;
-   burst and cog keep their own colours unless a surface overrides them. */
+/* Shared FORM shell pieces. The mark is the FORM arc with a chainring at its
+   tip — the same shape as the home-screen icon, so the app and the thing you
+   tapped to open it are recognisably one product. The arc takes currentColor;
+   the ring defaults to gold so it reads on the dark app bar, and gold-ground
+   surfaces override --cog to black. The starburst is gone: it was there to
+   float a black cog on a dark background, and a gold ring does that on its
+   own with one shape instead of two.
 
-export const MARK = `<svg class="mark" viewBox="0 0 48 48" aria-hidden="true">
-  <path d="M6 40C8 21 17 10 30 10" fill="none" stroke="currentColor" stroke-width="5.5"/>
-  <path class="burst" d="M32.00 1.50 L33.86 4.05 L36.75 2.77 L37.09 5.91 L40.23 6.25 L38.95 9.14 L41.50 11.00 L38.95 12.86 L40.23 15.75 L37.09 16.09 L36.75 19.23 L33.86 17.95 L32.00 20.50 L30.14 17.95 L27.25 19.23 L26.91 16.09 L23.77 15.75 L25.05 12.86 L22.50 11.00 L25.05 9.14 L23.77 6.25 L26.91 5.91 L27.25 2.77 L30.14 4.05 Z" fill="var(--burst, #F2C230)"/>
-  <path class="cog" d="M30.38 6.91 L30.82 5.12 L33.18 5.12 L33.62 6.91 L34.19 7.18 L35.87 6.41 L37.33 8.25 L36.21 9.72 L36.35 10.33 L38.00 11.16 L37.47 13.46 L35.63 13.49 L35.23 13.98 L35.61 15.79 L33.49 16.81 L32.32 15.39 L31.68 15.39 L30.51 16.81 L28.39 15.79 L28.77 13.98 L28.37 13.49 L26.53 13.46 L26.00 11.16 L27.65 10.33 L27.79 9.72 L26.67 8.25 L28.13 6.41 L29.81 7.18 Z M34.00 11.00 A2.0 2.0 0 1 0 30.00 11.00 A2.0 2.0 0 1 0 34.00 11.00 Z" fill="var(--cog, #0B0B0B)" fill-rule="evenodd"/>
+   The viewBox is the ink's own bounding box rather than a tidy 0 0 48 48 —
+   the ring reaches above the arc's design box, and a square viewBox clipped
+   the top off it in the nav disc. */
+
+export const MARK = `<svg class="mark" viewBox="2.2 -4.5 43.8 50.8" aria-hidden="true">
+  <path d="M5.5 43C7.5 20 14 7.5 24.66 7.5" fill="none" stroke="currentColor" stroke-width="6.2" stroke-linecap="round"/>
+  <path class="cog" d="M30.70 -2.02 L31.66 -4.27 L36.34 -4.27 L37.30 -2.02 L38.40 -1.57 L40.67 -2.48 L43.98 0.83 L43.07 3.10 L43.52 4.20 L45.77 5.16 L45.77 9.84 L43.52 10.80 L43.07 11.90 L43.98 14.17 L40.67 17.48 L38.40 16.57 L37.30 17.02 L36.34 19.27 L31.66 19.27 L30.70 17.02 L29.60 16.57 L27.33 17.48 L24.02 14.17 L24.93 11.90 L24.48 10.80 L22.23 9.84 L22.23 5.16 L24.48 4.20 L24.93 3.10 L24.02 0.83 L27.33 -2.48 L29.60 -1.57 Z M39.64 7.50 A5.64 5.64 0 1 0 28.36 7.50 A5.64 5.64 0 1 0 39.64 7.50 Z" fill="var(--cog, #F2C230)" fill-rule="evenodd"/>
 </svg>`;
 
 export function appbar(meta = "") {

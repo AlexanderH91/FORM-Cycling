@@ -130,11 +130,11 @@ label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform
 
 /* centre action */
 .nav a.cta{gap:0;color:var(--ink)}
-/* On the gold disc the gold IS the ground, so the burst drops out and the arc
+/* On the gold disc the gold IS the ground, so the ring turns black and the arc
    and cog go black. The cog's hub is a punched hole, so gold shows through. */
 .nav a.cta .disc{
   width:60px;height:60px;border-radius:50%;background:var(--gold);
-  color:#0B0B0B;--burst:transparent;--cog:#0B0B0B;
+  color:#0B0B0B;--cog:#0B0B0B;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
   box-shadow:0 8px 22px rgba(242,194,48,.28);
 }
@@ -145,7 +145,7 @@ label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform
 .nav a.cta.on{color:var(--gold)}
 .nav a.cta::after{display:none}
 
-/* the mark keeps its own colours everywhere: ink arc, gold burst.
+/* the mark keeps its own colours everywhere: ink arc, gold ring.
    .mark sets colour on itself, so gold-ground surfaces must override it here
    rather than relying on inheritance from the parent. */
 .mark{color:var(--ink)}

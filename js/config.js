@@ -4,8 +4,8 @@
    page, which revalidates far more aggressively. The version badge shows both,
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
-export const VERSION = "v10";
-export const BUILD = "2026-08-28-v10";
+export const VERSION = "v11";
+export const BUILD = "2026-08-29-v11";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
