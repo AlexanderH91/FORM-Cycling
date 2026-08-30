@@ -79,7 +79,12 @@ await b.close();
 
 /* Each fix branch has to keep to the shape: one sentence found, one to do. */
 {
-  const src = await (await fetch(`${BASE}/js/analysis.js`)).text();
+  const whole = await (await fetch(`${BASE}/js/analysis.js`)).text();
+  /* The report's fix only. The home screen's standing lines are a different
+     component with a different budget — they carry the mechanics, which is the
+     whole point of them — and scanning the file rather than the block quietly
+     applied the fix card's one-sentence rule to them. */
+  const src = whole.slice(whole.indexOf('  let fix;'), whole.indexOf('/* The picture has to be of the stroke'));
   const grab = (key) => [...src.matchAll(new RegExp(String.raw`\b${key}: (\`[^\`]*\`|"[^"]*")`, 'g'))]
     .map((m) => m[1].slice(1, -1).replace(/\$\{[^{}]*(\{[^{}]*\})?[^{}]*\}/g, '00').replace(/\s+/g, ' ').trim())
     .filter(Boolean);

@@ -822,6 +822,64 @@ export function settleFrontLegs(rows, fps = FRONT_FPS) {
   return bones;
 }
 
+/* WHERE THIS RIDER STANDS — one answer, computed once, used by the home
+   screen and by the report, so the two can never tell different stories about
+   the same rides on the same day. They did: home said "you ride at the
+   straighter end, ride after ride — so it is where you ride, not a shaky
+   reading" while the report, two taps away, said "we got a different answer
+   nearly every time, they cannot all be right". Home had no test for rides
+   that disagree with each other; it just averaged them and sounded sure.
+
+   And the wording: a rider does not need to be told our reading is not shaky.
+   That is us reassuring ourselves about our own measurement. What they need is
+   what their leg is doing, where the work is landing, and whether to touch
+   anything. Every line below says those three things and stops. */
+export function standing(reads) {
+  const across = pool(reads);
+  if (!across) return null;
+  const [lo, hi] = BANDS.kneeBendBDC;
+  const v = across.value, n = across.rides;
+  const rides = `${n} ride${n > 1 ? "s" : ""}`;
+  const deg = v.toFixed(0);
+  const verdict = verdictWith(v, across.u, BANDS.kneeBendBDC);
+  const sameSide = across.vals.every((x) => x < lo) || across.vals.every((x) => x > hi);
+  const straighter = v < (lo + hi) / 2;      // less bend = saddle nearer too high
+
+  /* Rides that disagree with each other by more than the whole range are not a
+     position, whatever their average comes out as. */
+  if (across.settled && !sameSide && across.hi - across.lo > hi - lo)
+    return { word: "Not settled",
+      head: "We can't call your saddle height yet",
+      line: `We measured your knee on ${rides} and got a different answer nearly every time — ${across.lo.toFixed(0)}° at the lowest, ${across.hi.toFixed(0)}° at the highest. Nothing on your bike changed, so they cannot all be right. Film one more from the side and we should be able to tell you.` };
+
+  if (verdict === "ok")
+    return { word: "Good",
+      head: "Your saddle height is doing its job",
+      line: `Your knee bends ${deg}° at the bottom of each stroke, in the middle of where riders sit. Your leg is finishing the push with the big muscles above the knee, which is where you want the work. Nothing to change — film again if you move the saddle or change shoes.` };
+
+  if (across.settled && verdict === "borderline")
+    return straighter
+      ? { word: "Just inside",
+          head: "Your saddle sits at the top of its useful range",
+          line: `At the bottom of each stroke your leg straightens almost fully — ${deg}°, where riders sit between ${lo}° and ${hi}°. It works, but the last part of every push lands on the back of your knee and the hamstring rather than the big muscles above. If long rides ache behind the knee, take 2–3 mm out of the saddle and see how that feels.` }
+      : { word: "Just inside",
+          head: "Your saddle sits at the bottom of its useful range",
+          line: `Your knee stays quite bent at the bottom of each stroke — ${deg}°, where riders sit between ${lo}° and ${hi}°. It works, but you never quite get through the strongest part of the push, and the front of the knee carries more of it. If you want more to lean on when the road tips up, add 2–3 mm and see how that feels.` };
+
+  if (verdict === "borderline")
+    return { word: "Not settled",
+      head: "One more ride and we can call it",
+      line: `Your rides do not agree closely enough yet — ${n} of ${SETTLE_RIDES}. Film one more from the same spot and we can tell you whether your leg is straightening too far at the bottom of the stroke, not far enough, or is fine where it is.` };
+
+  return straighter
+    ? { word: "Worth a change",
+        head: "Your saddle looks too high",
+        line: `Your leg straightens to ${deg}° at the bottom, where riders sit between ${lo}° and ${hi}°. Reaching that far for the pedal rocks your hips side to side and puts the end of every push behind the knee. Drop the saddle 5 mm, ride a minute, and film it again.` }
+    : { word: "Worth a change",
+        head: "Your saddle looks too low",
+        line: `Your knee is still bent ${deg}° at the bottom, where riders sit between ${lo}° and ${hi}°. You never get through the strongest part of the push, and the front of the knee takes what is left. Raise the saddle 5 mm, ride a minute, and film it again.` };
+}
+
 /* FRONT VIEW — the clip-level pass: sample the frames, settle the linkage,
    then report knee travel and left/right evenness from what survived. */
 export async function analyzeFrontClip(blob, trim, onProgress) {

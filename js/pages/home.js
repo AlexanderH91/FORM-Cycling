@@ -1,6 +1,6 @@
 import { supa } from "../supa.js";
-import { BANDS, SETTLE_RIDES } from "../config.js";
-import { pool, verdictWith, kneeReadOf } from "../analysis.js";
+
+import { pool, kneeReadOf, standing as standing_ } from "../analysis.js";
 import { appbar } from "../ui.js";
 
 export async function renderHome(view, user) {
@@ -13,49 +13,18 @@ export async function renderHome(view, user) {
   const latest = sessions?.at(-1);
   const knee = (s) => s?.report?.kneeBendBDC?.value ?? s?.report?.kneeBendBDC?.mean;
 
-  /* Home is the screen that gets to answer "so where am I?", so it pools every
-     ride rather than repeating the newest one's headline. A single ride can sit
-     a degree from the band edge and mean nothing; five rides that all sit there
-     mean that is where this rider rides. */
+  /* Home answers "so where am I?", so it pools every ride rather than
+     repeating the newest one's headline. One ride can sit a degree from the
+     edge and mean nothing; five that all sit there mean that is where this
+     rider rides.
+
+     What those rides ADD UP TO is decided in analysis.js and nowhere else.
+     Home used to work it out again from the same numbers and arrive somewhere
+     different — telling a rider "that is where you ride, not a shaky reading"
+     while the report two taps away said the readings could not all be right. */
   const reads = (sessions ?? []).map((s) => kneeReadOf(s.report)).filter(Boolean);
   const across = pool(reads);
-  const [kLo, kHi] = BANDS.kneeBendBDC;
-  const acrossVerdict = across ? verdictWith(across.value, across.u, BANDS.kneeBendBDC) : null;
-  /* This is the first screen anyone opens, so it is the one that has to make
-     sense with no run-up. It used to read: "You ride at the top edge — 15
-     rides, all between 27° and 39°, against a band of 30–40°. You ride just
-     over it, consistently." Three separate faults in one sentence: "band" is
-     our word and not a rider's, 27 to 39 against 30 to 40 is not "just over"
-     anything, and the whole line was printed again word for word in the card
-     below it.
-
-     Which edge, correctly. The old test asked whether the value was below the
-     bottom of the range — but a rider sitting exactly ON the bottom fails that
-     test and was told they ride at the TOP. Compare against the middle of the
-     range instead, which is what "nearer this end" actually means.
-
-     Less bend means the leg is straightening further, which is a saddle
-     slightly too high; more bend is one slightly too low. */
-  const rides = across ? `${across.rides} ride${across.rides > 1 ? "s" : ""}` : "";
-  const deg = across ? across.value.toFixed(0) : "";
-  const nearLow = across ? across.value < (kLo + kHi) / 2 : false;
-
-  const standing = !across ? null
-    : acrossVerdict === "ok"
-      ? { word: "OK",
-          head: "Your saddle height looks right",
-          line: `Your knee bends ${deg}° at the bottom of the stroke, across ${rides}. Riders sit between ${kLo}° and ${kHi}°, so you are comfortably inside that.` }
-    : across.settled && acrossVerdict === "borderline"
-      ? { word: "At edge",
-          head: nearLow ? "You ride at the straight-leg end" : "You ride at the bent-leg end",
-          line: `Your knee bends ${deg}° at the bottom of the stroke, and riders sit between ${kLo}° and ${kHi}°. You are right at the ${nearLow ? "straighter" : "more bent"} end of that, ride after ride — so it is where you ride, not a shaky reading.` }
-    : acrossVerdict === "borderline"
-      ? { word: "Not settled",
-          head: "Not enough agreement yet",
-          line: `Your rides do not line up closely enough for us to call this — ${across.rides} of ${SETTLE_RIDES} so far. Film one more from the same spot and we should be able to.` }
-      : { word: "Watch",
-          head: nearLow ? "Your saddle looks a little high" : "Your saddle looks a little low",
-          line: `Your knee bends ${deg}° at the bottom of the stroke, across ${rides}, where riders sit between ${kLo}° and ${kHi}°. ${nearLow ? "Your leg is straightening further than it wants to, which is what a saddle a touch too high feels like." : "Your leg never quite opens out, which is what a saddle a touch too low feels like."}` };
+  const standing = standing_(reads);
 
   view.innerHTML = `
   ${appbar(new Date().toLocaleDateString(undefined,{day:"numeric",month:"short"}))}
