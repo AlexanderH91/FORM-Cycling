@@ -16,20 +16,20 @@ const VIEWS = [
        It replaces judging a height in the air: put the saddle on the line and
        the phone is at saddle height, because the line is the lens's own eye
        level. */
-    online: "Saddle on this line",
-    hint: "Whole bike inside the frame, saddle on the line — that puts the phone at saddle height without you guessing it.",
+    online: "Your seat on this line",
+    hint: "Whole bike in the box, your seat on the line.",
     title: "Side view", gives: "saddle height, hip fold, foot angle, cadence and fore/aft" },
   { key: "front", label: "Front",  need: "optional",
     /* Bar height was wrong guidance, and it was mine. At bar height the bars
        and the levers sit across exactly the part of the leg this view needs,
        so the model ends up guessing at knees it cannot see. Low and further
        back puts the legs in clear air. */
-    online: "Front hub on this line",
-    hint: "In front, down at hub height: front hub on the line. Low keeps your knees in clear air, not behind the bars.",
+    online: "Middle of the front wheel here",
+    hint: "In front, crouched to knee height — front wheel on the line, knees clear of the bars.",
     title: "Front view", gives: "whether your knees track in or out, which no other angle can see" },
   { key: "rear",  label: "Behind", need: "optional",
-    online: "Rear hub on this line",
-    hint: "Behind the rear wheel, rear hub on the line, light from the side — never a window straight behind you.",
+    online: "Middle of the back wheel here",
+    hint: "Behind the bike at knee height. Light from the side, not a window behind you.",
     title: "From behind", gives: "shoulder and pelvis rock, and whether you sit level" },
 ];
 
@@ -87,6 +87,22 @@ function drawCapture(view, user, state) {
           because it is a reference and not the rider (line grammar). */""}
     <div class="guide" id="guide" aria-hidden="true">
       <div class="gbox"></div>
+      ${/* A bike, not a sentence. "Rear hub on this line" asks a rider to
+            translate a word into a part of their own bike before they can do
+            anything with it, and most people do not know what a hub is. A
+            ghosted bike drawn at the size and height we want, with the line
+            running through its seat, is the same instruction with nothing to
+            translate: make yours sit on top of this one. The saddle in the
+            drawing is exactly on the line, so matching the picture puts the
+            phone at seat height by itself. */""}
+      <svg class="gbike" id="gbike" viewBox="0 0 120 96" fill="none"
+           stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
+           stroke-linejoin="round" stroke-dasharray="5 4">
+        <circle cx="26" cy="74" r="20"/><circle cx="94" cy="74" r="20"/>
+        <path d="M26 74 L52 50 L80 50 L94 74 M52 50 L60 74 L26 74 M80 50 L60 74"/>
+        <path d="M43 48 H61" stroke-dasharray="0"/>
+        <path d="M74 44 H88" stroke-dasharray="0"/>
+      </svg>
       <div class="gline"><span id="glabel"></span></div>
     </div>
     <div class="stage-msg hidden" id="stagemsg"></div>
@@ -130,6 +146,8 @@ function drawCapture(view, user, state) {
     const clip = state.clips[state.angle];
     $("#hint").textContent = v.hint;
     glabel.textContent = v.online;
+    // The ghost is a side profile, so it only helps on the side view.
+    view.querySelector("#gbike").classList.toggle("hidden", state.angle !== "side");
 
     for (const btn of view.querySelectorAll(".angle")) {
       const k = btn.dataset.a;
@@ -240,7 +258,7 @@ function drawCapture(view, user, state) {
       cam.srcObject = state.stream;
       await cam.play().catch(() => {});
       msg.classList.add("hidden");
-      fitStage();
+      showLensNote();
     } catch (e) {
       // No camera is not a dead end — you can still import what you filmed.
       msg.textContent = "No camera here — import a video instead.";
@@ -270,14 +288,19 @@ function drawCapture(view, user, state) {
     };
   }
 
-  function fitStage() {
-    const stage = view.querySelector(".stage");
-    const lens = lensOf();
-    const w = cam.videoWidth || lens?.w, h = cam.videoHeight || lens?.h;
-    if (stage && w && h) stage.style.aspectRatio = `${w} / ${h}`;
+  /* The stage keeps its own shape, full width — nothing here resizes it.
+     Handing it the camera's shape was wrong twice over: a phone held upright
+     films 9:16, so the card became a narrow column down half the screen, and
+     the crop it was meant to fix never needed fixing. object-fit:cover scales
+     up and trims symmetrically toward the middle, so the preview is a CENTRED
+     SUBSET of what is recorded: a box drawn inside it is inside the frame with
+     room to spare, and the middle of the preview is exactly the middle of the
+     recording. The guide was always conservative, never loose. */
+  function showLensNote() {
     /* The selfie lens is usually wider and softer than the rear one. Said
        once, never enforced — plenty of riders can only reach the screen from
        in front of the bike, and a read from the front camera beats no read. */
+    const lens = lensOf();
     const note = view.querySelector("#lensnote");
     if (note) {
       const selfie = lens?.facing === "user";
@@ -287,7 +310,7 @@ function drawCapture(view, user, state) {
       note.classList.toggle("hidden", !selfie);
     }
   }
-  cam.onloadedmetadata = fitStage;
+  cam.onloadedmetadata = showLensNote;
 
   view.querySelector("#angles").onclick = (e) => {
     const btn = e.target.closest(".angle");

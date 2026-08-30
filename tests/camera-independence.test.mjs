@@ -110,7 +110,7 @@ const guide = await page.evaluate(async () => {
   return {
     inThePreview: /<div class="guide" id="guide"/.test(src),
     everyViewHasOne: (src.match(/online: "/g) || []).length === 3,
-    namesTheLine: /online: "Saddle on this line"/.test(src),
+    namesTheLine: /online: "Your seat on this line"/.test(src),
     dashed: /\.gline\{[^}]*dashed/.test(css) && /\.gbox\{[^}]*dashed/.test(css),
     hiddenOverFootage: /guide\.classList\.add\("hidden"\)/.test(src),
     shownWithTheLens: /guide\.classList\.remove\("hidden"\)/.test(src),
@@ -134,9 +134,26 @@ const honest = await page.evaluate(async () => {
   const src = await (await fetch('/js/pages/analyze.js')).text();
   const css = await (await fetch('/css/app.css')).text();
   return {
-    stageTakesTheCameraShape: /stage\.style\.aspectRatio = `\$\{w\} \/ \$\{h\}`/.test(src),
-    fittedWhenTheStreamStarts: /await cam\.play\(\)[\s\S]{0,120}fitStage\(\)/.test(src)
-      && /cam\.onloadedmetadata = fitStage/.test(src),
+    /* The stage keeps its own shape, full width. Taking the camera's shape
+       turned an upright phone's 9:16 stream into a narrow column down half
+       the screen — and the crop it was meant to fix was never a problem:
+       object-fit:cover trims symmetrically toward the middle, so the preview
+       is a CENTRED SUBSET of the recording. A box inside that subset is
+       inside the frame with room to spare. */
+    stageKeepsItsOwnShape: !/stage\.style\.aspectRatio/.test(src)
+      && /\.stage\{[^}]*aspect-ratio:4\/3/.test(css),
+    lensNoteRuns: /await cam\.play\(\)[\s\S]{0,120}showLensNote\(\)/.test(src)
+      && /cam\.onloadedmetadata = showLensNote/.test(src),
+    /* It reads the track it talks about. Leaving `lens` undefined here threw
+       inside startCamera's try, which disabled the shutter and put "camera
+       unavailable" on the screen for every rider. */
+    lensNoteReadsTheLens: /function showLensNote\(\)[\s\S]{0,400}const lens = lensOf\(\)/.test(src),
+    // and it is drawn on a bike, not on a word nobody has to look up
+    ghostBike: /<svg class="gbike"/.test(src) && /\.gbike\{/.test(css),
+    ghostOnlyOnTheSideView: /gbike"\)\.classList\.toggle\("hidden", state\.angle !== "side"\)/.test(src),
+    noBikeJargon: !/online: "[^"]*hub/i.test(src),
+    plainWords: /online: "Your seat on this line"/.test(src)
+      && /online: "Middle of the front wheel here"/.test(src),
     fallsBackToAnyLens: /getUserMedia\(\{ video: true, audio: false \}\)/.test(src),
     saysWhenItIsTheSelfieLens: /Front camera — it works/.test(src),
     // ...and says it, rather than refusing to use it
@@ -147,13 +164,18 @@ const honest = await page.evaluate(async () => {
        identifiers for this rider's hardware. Checked in the function that
        reads the track, not across the file, because the comment beside it
        names them in order to say they are not taken. */
-    noDeviceIds: !/deviceId|groupId/.test(src.slice(src.indexOf('function lensOf'), src.indexOf('function fitStage'))),
+    noDeviceIds: !/deviceId|groupId/.test(src.slice(src.indexOf('function lensOf'), src.indexOf('function showLensNote'))),
     stillHasTheCoverRule: /object-fit:cover/.test(css),
   };
 });
-T('the preview takes the camera\'s own shape, so the box is the real frame',
-  honest.stageTakesTheCameraShape && honest.fittedWhenTheStreamStarts,
-  'a 4:3 stage cropped a 16:9 camera out of its own guide');
+T('the preview is a full-width card, not a column down half the screen',
+  honest.stageKeepsItsOwnShape && honest.lensNoteRuns && honest.lensNoteReadsTheLens,
+  'cover crops toward the middle, so a box inside the preview is inside the frame');
+T('the guide draws a bike to line up with, not a part to look up',
+  honest.ghostBike && honest.ghostOnlyOnTheSideView && honest.noBikeJargon,
+  'its saddle sits on the line, so matching it sets the phone height');
+T('and where it does use words, they are words anyone has for a bike',
+  honest.plainWords, 'seat and wheels, never hubs');
 T('a phone with no rear camera still gets a preview', honest.fallsBackToAnyLens,
   'the fallback used to ask for the same rear camera twice');
 T('the selfie lens is named, not refused',

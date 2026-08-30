@@ -174,7 +174,7 @@ label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform
 .rec-pill{position:absolute;top:12px;left:12px;display:flex;align-items:center;gap:2px;
   background:rgba(11,11,11,.7);border-radius:999px;padding:5px 11px 5px 9px;
   font-family:var(--mono);font-size:12px;letter-spacing:.06em}
-.hint{margin:10px 2px;font-size:14px}
+.hint{margin:8px 2px;font-size:14px}
 
 .angles{display:flex;gap:8px;margin-bottom:10px}
 .angle{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;cursor:pointer;
@@ -417,8 +417,13 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .guide.hidden{display:none}
 .gbox{position:absolute;left:5%;right:5%;top:15%;bottom:15%;
   border:1.5px dashed rgba(242,194,48,.5);border-radius:10px}
+/* The ghost bike: its saddle is on the line by construction, so lining your
+   own bike up with it puts the phone at seat height with nothing to work out. */
+.gbike{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  width:62%;color:rgba(242,194,48,.42);pointer-events:none}
+.gbike.hidden{display:none}
 .gline{position:absolute;left:5%;right:5%;top:50%;border-top:1.5px dashed rgba(242,194,48,.9)}
-.gline span{position:absolute;top:0;left:50%;transform:translate(-50%,-50%);
+.gline span{position:absolute;top:0;left:0;transform:translateY(-50%);
   background:rgba(11,11,11,.78);color:var(--gold);white-space:nowrap;
   font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;
   padding:4px 9px;border-radius:99px}

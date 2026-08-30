@@ -1343,10 +1343,14 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   let fix;
   if (pooled.settled && !sameSide && spread > kHi - kLo)
     fix = {
-      title: "Film it the same way twice",
-      line: `Your knee has read anywhere from ${pooled.lo.toFixed(0)}° to ${pooled.hi.toFixed(0)}° across ${pooled.rides} rides. Your saddle did not move that much — the camera did.`,
-      cue: "Phone at saddle height, square to the side of the bike, same spot every time.",
-      why: `That spread is wider than the whole ${kLo}–${kHi}° window we are trying to place you in, which means the reads disagree rather than that you ride inconsistently. Trim to a stretch where you are already pedalling steadily too, not starting or easing off. It is worth the ten minutes because everything else waits on it: saddle height is the setting the rest of a fit is built on, and until two rides agree, any number we gave you would be a coin flip dressed up as advice.`,
+      /* This card told a rider their camera was at fault in a sentence about
+         degrees, and then asked them to film again — for the ninth time. Say
+         the plain thing instead: we got different answers, that is our
+         problem and not theirs, and here is the one thing that helps. */
+      title: "We can't call your saddle height yet",
+      line: `We measured your knee on ${pooled.rides} rides and got a different answer nearly every time — ${pooled.lo.toFixed(0)}° at the lowest, ${pooled.hi.toFixed(0)}° at the highest. Nothing on your bike changed, so they cannot all be right.`,
+      cue: "Film one more from the side, with the whole bike in the box on screen and your seat on the line.",
+      why: `We would rather tell you that than pick one and sound confident. Riders sit between ${kLo}° and ${kHi}° here, and the gap between your own readings is wider than that whole range — so whichever one we picked, we would have a good chance of sending you the wrong way. Saddle height is the setting everything else in a fit is built on, which is why we would rather hold it than guess. Framing it the same way is what makes two rides comparable; the guide on the capture screen is there to make that easy.`,
     };
   else if (pooled.settled && pooledVerdict === "borderline" && edgeSide)
     fix = {
