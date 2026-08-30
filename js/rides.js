@@ -23,7 +23,7 @@ export const METRICS = [
     note: "Only from rides with a real power meter — Strava's estimate for rides without one is a model, not a measurement." },
   { key: "watts_per_bpm", name: "Watts per heartbeat", unit: "W/bpm", better: "up", floor: 0.02,
     of: (r) => (r.device_watts && r.avg_watts && r.avg_hr ? r.avg_watts / r.avg_hr : null),
-    note: "Power against the heart rate it cost. Moves with fitness and with the weather, so it is a hint rather than a verdict." },
+    note: "Power against the heart rate it cost. Moves with fitness and with the weather, so read it as a hint rather than as proof." },
   { key: "avg_cadence", name: "Cadence", unit: "rpm", better: null, floor: 1,
     of: (r) => r.avg_cadence ?? null,
     note: "Not better high or low — but a saddle change moves it, so a shift here is a sign the change was real." },

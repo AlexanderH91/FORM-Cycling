@@ -80,7 +80,12 @@ label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform
 /* master video — the ride played back with the measurement on it */
 .player{padding:0;overflow:hidden;border-radius:20px;margin-bottom:10px}
 .stagewrap{position:relative;background:#000;line-height:0}
-.player .shot{width:100%;height:auto;display:block;object-fit:contain}
+/* A clip filmed on an upright phone is 9:16, so at full width it ran about
+   700px tall — the whole viewport, with the player's own controls pushed off
+   the bottom and the fixed nav bar sitting over the middle of the footage.
+   Cap it. object-fit:contain letterboxes inside the cap, and the overlay
+   already maps through fitContain(), so the lines still land on the joints. */
+.player .shot{width:100%;height:auto;max-height:52dvh;display:block;object-fit:contain}
 .stagewrap canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
 .mv-live{position:absolute;top:10px;right:12px;background:rgba(11,11,11,.72);
   border-radius:999px;padding:5px 11px;font-size:14px;font-variant-numeric:tabular-nums}

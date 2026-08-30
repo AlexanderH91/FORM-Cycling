@@ -17,10 +17,15 @@ const page = await b.newPage();
 await page.goto(`${BASE}/index.html`);
 
 const found = await page.evaluate(async () => {
-  const files = {
-    'js/analysis.js': await (await fetch('/js/analysis.js')).text(),
-    'js/pages/analyze.js': await (await fetch('/js/pages/analyze.js')).text(),
-  };
+  /* Every screen, not just the report. The rule was written for the report
+     cards and only ever checked two files, so "You ride at the top edge — 15
+     rides, all between 27° and 39°, against a band of 30–40°" sat on the home
+     screen — the first thing anyone opens — through every pass of this. */
+  const names = ['js/analysis.js', 'js/rides.js', 'js/pages/analyze.js',
+    'js/pages/home.js', 'js/pages/journey.js', 'js/pages/login.js',
+    'js/pages/coach.js', 'js/pages/connect.js', 'js/pages/profile.js'];
+  const files = {};
+  for (const n of names) files[n] = await (await fetch('/' + n)).text();
 
   /* Every string literal in the value of `key:`, not just the first one.
      The first version of this stopped at the opening quote and skipped any
@@ -62,7 +67,7 @@ const found = await page.evaluate(async () => {
      rule as everything else. */
   const all = [];
   for (const [file, src] of Object.entries(files))
-    for (const key of ['means', 'note', 'caption', 'title', 'line', 'cue', 'why', 'gate'])
+    for (const key of ['means', 'note', 'caption', 'title', 'line', 'head', 'cue', 'why', 'gate'])
       for (const text of strings(src, key)) all.push({ file, key, text });
   return all;
 });
@@ -91,11 +96,32 @@ for (const s of found)
   for (const [re, why] of SHOP_TALK)
     if (re.test(s.text)) offenders.push(`${s.file} ${s.key}: "${s.text.match(re)[0]}" — ${why}`);
 
+/* Most screen copy is not behind a `key:` at all — it is prose inside the
+   markup a page writes. So sweep the whole file too, with comments stripped
+   and matching case-sensitively on lowercase words: BANDS and verdictWith are
+   code and stay; "a band of 30-40 degrees" and "no verdict" are copy and go. */
+const prose = await page.evaluate(async (names) => {
+  const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/[^\n]*/g, '$1 ');
+  const out = [];
+  for (const n of names) {
+    const src = strip(await (await fetch('/' + n)).text());
+    for (const w of ['band', 'bands', 'cited', 'verdict', 'verdicts', 'landmark',
+                     'percentile', 'provisional', 'margin of error']) {
+      const at = src.search(new RegExp(`\\b${w}\\b`));
+      if (at >= 0) out.push(`${n}: "…${src.slice(Math.max(0, at - 40), at + 45).replace(/\s+/g, ' ').trim()}…"`);
+    }
+  }
+  return out;
+}, ['js/pages/home.js', 'js/pages/journey.js', 'js/pages/login.js',
+    'js/pages/profile.js', 'js/pages/coach.js', 'js/pages/connect.js']);
+
 const count = (k) => found.filter((s) => s.key === k).length;
 T('there is card copy to check', found.length >= 60,
   `${count('means')} meanings, ${count('note')} notes, ${count('caption')} captions, ${found.length - count('means') - count('note') - count('caption')} lines of the fix and the refusals`);
 T('no card speaks our language instead of the rider\'s', offenders.length === 0,
   offenders.slice(0, 4).join(' | ') || 'nothing to translate');
+T('and neither does any other screen', prose.length === 0,
+  prose.slice(0, 3).join(' | ') || 'home, journey, login, profile, coach and connect are clean');
 
 /* The face of a card has a job: say what the body is doing, and say what the
    rider gets if it changes. A card naming neither is a fact filed at someone. */

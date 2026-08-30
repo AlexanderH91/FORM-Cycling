@@ -22,7 +22,7 @@ function shiftRow(s) {
     <b class="${dir}">${fmt(s.beforeValue, s.unit)} → ${fmt(s.afterValue, s.unit)} ${s.unit}
       <em>${s.clear ? `${sign}${fmt(s.delta, s.unit)}` : "no clear change"}</em></b></div>
     <div class="jsub">${s.before} rides before, ${s.after} after${
-      s.clear ? "" : ` · the difference is inside the spread of the rides themselves (±${fmt(s.u, s.unit)})`}</div>`;
+      s.clear ? "" : ` · the change is smaller than the difference between your own rides, so it could be either way`}</div>`;
 }
 
 export async function renderJourney(view, user) {
