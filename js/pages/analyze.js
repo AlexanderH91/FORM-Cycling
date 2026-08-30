@@ -507,9 +507,18 @@ export function drawReport(view, r, clips) {
     <div class="glass card" style="border-left:3px solid ${r.provisional ? "#E0603A" : "var(--gold)"}">
       <div class="sect" style="margin:0 0 6px${r.provisional ? ";color:#E0603A" : ""}">${
         r.provisional ? "Provisional read" : "This ride's fix"}</div>
+      ${/* What we found, then what to do — one sentence each. The reasoning
+            behind it folds away, exactly like the measurement cards below.
+            This card used to print all of it at once, and sixteen lines of
+            prose is not a fix a rider can act on; it is a page they scroll
+            past to reach their own numbers. */""}
       <h2>${f.title}</h2><p>${f.line}</p>
-      <p><strong>Try:</strong> ${f.cue}</p>
-      ${f.why ? `<p class="why"><strong>What that gets you:</strong> ${f.why}</p>` : ""}
+      <p class="try"><strong>Try:</strong> ${f.cue}</p>
+      ${f.why ? `
+      <button class="mhead fixmore" type="button" aria-expanded="false" aria-controls="fixwhy">
+        <span class="mtoggle">What that gets you<i>▾</i></span>
+      </button>
+      <div class="mbody" id="fixwhy" hidden><p class="why">${f.why}</p></div>` : ""}
       ${/* Without a date for the change there is no before and no after, and
             the Journey screen is just a fitness chart. FORM never assumes its
             advice was taken — the rider says so. */""}
@@ -593,7 +602,9 @@ export function drawReport(view, r, clips) {
       const open = head.getAttribute("aria-expanded") === "true";
       head.setAttribute("aria-expanded", String(!open));
       body.hidden = open;
-      head.closest(".mcard").classList.toggle("open", !open);
+      // The fix card borrows this behaviour without being a .mcard.
+      head.closest(".mcard")?.classList.toggle("open", !open);
+      head.classList.toggle("open", !open);
     };
   }
 

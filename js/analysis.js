@@ -529,7 +529,29 @@ function seekTo(video, t, budgetMs = 2500) {
   });
 }
 
-/* `after` runs once the clip has been sampled and BEFORE the video is
+/* WHY THE SWEEP DOES NOT WAIT FOR A PAINTED FRAME.
+   It is tempting: "seeked" means the seek finished, not that the new frame has
+   been presented, so a detect() straight after a seek looks like it could be
+   reading the previous frame. paintedFrame() was added to both sweeps on that
+   reasoning in v22 and reverted in v23, because the rider's own sessions said
+   otherwise on both counts.
+
+   It did not fix anything. Detection came back at 1.00 on the side view in
+   every session before the change and every session after it; the single
+   failed read it was meant to explain sat between two perfect ones.
+
+   And it cost a great deal. requestVideoFrameCallback fires when a frame is
+   PRESENTED, and this element is a paused 1px video that presents nothing, so
+   every sample burned the whole 250 ms budget: the side pass went from 14 s to
+   46 s. Worse, by the time the front clip opened, seeking had stopped working
+   altogether — 163 frames sampled with no failures before the change, 6
+   sampled with 5 seek failures after it, and both extra views refused for
+   footage that had been fine the day before.
+
+   If a frame really does need to be settled, the accurate re-read pass is
+   where to do it — it reads a few dozen frames, not two thousand.
+
+   `after` runs once the clip has been sampled and BEFORE the video is
    released — the only moment the front and rear views can pull a still, since
    everything they know about the clip dies with that element. */
 async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read, after) {
@@ -559,7 +581,6 @@ async function sampleFrames(blob, [t0, t1], onProgress, fps, seconds, read, afte
         continue;
       }
       missed = 0;
-      await paintedFrame(video, 250);      // see analyzeSideClip: a seek is not a frame
       const p = lm.detectForVideo(video, performance.now()).landmarks?.[0];
       // The frame's own time, not the time we asked to seek to — the overlay
       // rides on this, and a request is not a position.
@@ -979,15 +1000,9 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       continue;
     }
     missedSeeks = 0;
-    /* Wait for the frame to actually be presented before reading it.
-       "seeked" fires when the seek completed, not when the new frame exists —
-       see paintedFrame above — so a detect() in that gap is handed the
-       previous frame or nothing at all. Nothing found means no pose, and
-       enough of those in a row drop the detection rate below the floor and
-       gate the whole clip with a message blaming the rider's framing. The
-       accurate re-read pass has always waited; the sweep that decides whether
-       there is anything to re-read did not. */
-    await paintedFrame(video, 250);
+    /* NO paintedFrame() here, deliberately — see the note above sampleFrames.
+       Waiting for a presented frame on every sample was tried and reverted: it
+       tripled the side pass and killed the two that follow it. */
     const res = lm.detectForVideo(video, performance.now());
     const p = res.landmarks?.[0];
     frames.sampled++;
@@ -1247,23 +1262,35 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
 
   /* One fix per report, ranked: an honest statement of where the rider sits
      outranks any prescription, because a change built on a coin flip is worse
-     than no change. */
+     than no change.
+
+     THREE PARTS, AND THEY HAVE SIZES. `line` is what we found, in one
+     sentence. `cue` is what to do, in one sentence. Everything else — the
+     evidence, the mechanics, what it gets you — belongs in `why`, which the
+     report keeps folded away behind a tap.
+
+     This card is the first thing a rider meets after their own footage, and it
+     shipped once as sixteen lines of unbroken prose. Depth is not the problem
+     and never was; depth arriving all at once, before anyone has asked for it,
+     is. Every measurement card on this screen already opens on a sentence and
+     hides its working. The fix is the card that most needs to follow that
+     pattern and was the only one that did not. */
   let fix;
   if (pooled.settled && !sameSide && spread > kHi - kLo)
     fix = {
       title: "Film it the same way twice",
-      line: `Your knee has read anywhere from ${pooled.lo.toFixed(0)}° to ${pooled.hi.toFixed(0)}° across ${pooled.rides} rides — a spread wider than the whole ${kLo}–${kHi}° window we are trying to place you in. Your saddle did not move by that much, so what is moving is the camera.`,
-      cue: "Same spot every time: phone at saddle height, straight out to the side rather than at an angle, whole bike in frame. Then trim to a stretch where you are already pedalling steadily, not starting or easing off.",
-      why: "This is worth ten minutes because everything else waits on it. Saddle height is the setting the rest of a fit is built on — get two rides that agree and we can tell you which way to move it and by how much. Until then any number we gave you would be a coin flip dressed up as advice.",
+      line: `Your knee has read anywhere from ${pooled.lo.toFixed(0)}° to ${pooled.hi.toFixed(0)}° across ${pooled.rides} rides. Your saddle did not move that much — the camera did.`,
+      cue: "Phone at saddle height, square to the side of the bike, same spot every time.",
+      why: `That spread is wider than the whole ${kLo}–${kHi}° window we are trying to place you in, which means the reads disagree rather than that you ride inconsistently. Trim to a stretch where you are already pedalling steadily too, not starting or easing off. It is worth the ten minutes because everything else waits on it: saddle height is the setting the rest of a fit is built on, and until two rides agree, any number we gave you would be a coin flip dressed up as advice.`,
     };
   else if (pooled.settled && pooledVerdict === "borderline" && edgeSide)
     fix = {
       title: tooStraight ? "You ride at the bottom edge" : "You ride at the top edge",
-      line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom, every one of them between ${pooled.lo.toFixed(0)}° and ${pooled.hi.toFixed(0)}°. Riders sit between ${kLo}° and ${kHi}°, so you are just ${edgeSide} that — consistently. That agreement across separate days and separate camera setups is the evidence; no single ride could give it.`,
+      line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom — just ${edgeSide} the ${kLo}–${kHi}° riders sit in, every single time.`,
       cue: tooStraight
         ? "Two to three millimetres down would bring you inside — about a third of the width of the marks on a seatpost."
         : "Two to three millimetres up would bring you inside — about a third of the width of the marks on a seatpost.",
-      why: `This close to the edge the difference is small and comfort should decide it. ${consequence} If nothing aches and the power feels good where you are, this is a fine place to ride.`,
+      why: `Every one of those rides landed between ${pooled.lo.toFixed(0)}° and ${pooled.hi.toFixed(0)}°. That agreement across separate days and separate camera setups is the evidence; no single ride could give it. This close to the edge the difference is small and comfort should decide it. ${consequence} If nothing aches and the power feels good where you are, this is a fine place to ride.`,
     };
   else if (pooled.settled && pooledVerdict === "ok")
     fix = {
@@ -1275,16 +1302,16 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   else if (pooledVerdict === "low" || pooledVerdict === "high")
     fix = {
       title: tooStraight ? "Saddle looks high" : "Saddle looks low",
-      line: `Your knee ${tooStraight ? "only bends" : "stays bent"} ${pv}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""} — riders sit between ${kLo}° and ${kHi}°, and that gap is wider than the amount we could be out by (${pooled.u.toFixed(1)}°).`,
+      line: `Your knee ${tooStraight ? "only bends" : "stays bent"} ${pv}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""}, where riders sit between ${kLo}° and ${kHi}°.`,
       cue: saddleMove("5 mm"),
-      why: consequence,
+      why: `That gap is wider than the amount we could be out by (${pooled.u.toFixed(1)}°), so it is a real difference rather than a noisy read. ${consequence}`,
     };
   else if (pooledVerdict === "borderline")
     fix = {
       title: "Too close to call — one more read",
-      line: `Your knee bends ${k}° at the bottom, and riders sit between ${kLo}° and ${kHi}°. Over ${kneeBDC.n} strokes we can place you to about ${kU.toFixed(1)}° either way — which still reaches across the edge, so we cannot honestly call it.`,
-      cue: `Ride ${pooled.rides} of ${SETTLE_RIDES}. Film again in the same spot — we add your rides together, and how closely they agree is what settles it.`,
-      why: "Moving a saddle on a reading this close is guesswork, and guesswork on saddle height is how people end up chasing knee pain around the bike. One more ride costs ten minutes and settles it.",
+      line: `Your knee bends ${k}° at the bottom and riders sit between ${kLo}° and ${kHi}° — too close for us to call it either way.`,
+      cue: `Ride ${pooled.rides} of ${SETTLE_RIDES}. Film again in the same spot.`,
+      why: `Over ${kneeBDC.n} strokes we can place you to about ${kU.toFixed(1)}° either way, which still reaches across the edge. Moving a saddle on a reading this close is guesswork, and guesswork on saddle height is how people end up chasing knee pain around the bike. We add your rides together and how closely they agree is what settles it — one more costs ten minutes.`,
     };
   else if (toeBDC && toeVerdict === "high" && toeBDC.value > BANDS.footToeDown6[1] + 3)
     fix = {
@@ -1436,7 +1463,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     fix = {
       title: "Square the camera up first",
       line: capture.reason,
-      cue: "Stand the phone level with the saddle, straight out to the side of the bike, and film again — then these numbers are worth acting on.",
+      cue: "Stand the phone level with the saddle and square to the side of the bike, then film again.",
+      why: "Angles read off an angled view are stretched, which is why we are not saying whether the numbers below are right or wrong. Filmed square, the same clip is worth acting on.",
     };
   }
 

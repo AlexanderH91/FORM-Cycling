@@ -393,6 +393,14 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .mhead .mtoggle i{font-style:normal;transition:transform .2s ease}
 .mcard.open .mtoggle i{transform:rotate(180deg)}
 .mbody{padding:0 16px 16px}
+
+/* The fix card borrows the accordion without being a card of its own: it is
+   already inside .card padding, so the toggle and its panel sit flush. */
+.fixmore{padding:2px 0 0}
+.fixmore.open .mtoggle i{transform:rotate(180deg)}
+#fixwhy{padding:10px 0 0}
+#fixwhy .why{color:var(--muted);font-size:14.5px;line-height:1.6}
+.card .try{margin-top:10px}
 .mbody p{margin:0;font-size:14px}
 .mbody .cardshot{margin:0 0 12px}
 

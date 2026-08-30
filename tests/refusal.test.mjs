@@ -45,23 +45,31 @@ T('and the way out is on the screen', gated.offersARetake, 'Re-record');
    "seeked" means the seek finished, not that the frame has been presented —
    a detect() in that gap gets the previous frame or nothing, and enough of
    those gate the clip while blaming the rider's framing. */
+/* The sweep must NOT wait for a presented frame, and this is the guard against
+   adding it back. It was added in v22 on the reasoning that "seeked" does not
+   mean the frame exists, and reverted in v23 because the rider's own sessions
+   showed it fixed nothing and broke two views: requestVideoFrameCallback fires
+   when a frame is PRESENTED, and a paused 1px offscreen video presents none,
+   so every sample burned its whole budget. */
 const reads = await page.evaluate(async () => {
   const src = await (await fetch('/js/analysis.js')).text();
-  /* Every place this file reads the video, and whether a wait for a presented
-     frame comes just before it. Checked as an invariant over all of them
-     rather than site by site, so a new read loop cannot be added without one. */
-  const sites = [...src.matchAll(/(?:lm|fine)\.detect(?:ForVideo)?\(video/g)].map((m) => m.index);
-  const guarded = sites.filter((i) => /await paintedFrame\(/.test(src.slice(Math.max(0, i - 1400), i)));
-  const label = (i) => src.slice(Math.max(0, i - 1400), i).match(/(?:async function|function|const) (\w+)/g)?.pop() ?? '?';
+  const body = (from, to) => src.slice(src.indexOf(from), src.indexOf(to, src.indexOf(from)));
   return {
-    total: sites.length,
-    guarded: guarded.length,
-    unguarded: sites.filter((i) => !guarded.includes(i)).map(label),
+    sideSweep: body('onProgress(8, "Reading your pedal strokes', 'const { side, flipped }'),
+    viewSweep: body('async function sampleFrames', 'rows.stat = stat;'),
+    stillWaits: /await paintedFrame\(video\);/.test(body('async function still(', 'function bestStill')),
+    refineWaits: /await paintedFrame\(video, 400\)/.test(body('async function detectAt', 'Re-read the strokes')),
+    reasonWritten: /WHY THE SWEEP DOES NOT WAIT FOR A PAINTED FRAME/.test(src),
   };
 });
-T('every read of the video waits for a frame to exist first',
-  reads.guarded === reads.total && reads.total >= 4,
-  reads.unguarded.length ? `unguarded: ${reads.unguarded.join(', ')}` : `all ${reads.total} reads guarded`);
+T('the side sweep reads the frame it seeked to, without stalling on it',
+  !/await paintedFrame\(/.test(reads.sideSweep), 'adding a wait here took the pass from 14s to 46s');
+T('and so does the front and rear sweep',
+  !/await paintedFrame\(/.test(reads.viewSweep), 'adding a wait here took 163 sampled frames down to 6');
+T('while the stills and the accurate re-read still wait, where it is cheap',
+  reads.stillWaits && reads.refineWaits, 'a few dozen frames, not two thousand');
+T('and the reason is written down where the next person will be tempted',
+  reads.reasonWritten, 'so this is not rediscovered by shipping it again');
 
 await b.close();
 finish();
