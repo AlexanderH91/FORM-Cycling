@@ -45,7 +45,7 @@ const clock = (x) => `${Math.floor(x / 60)}:${String(Math.floor(x % 60)).padStar
 const viewOf = (k) => VIEWS.find((v) => v.key === k);
 
 export function renderAnalyze(view, user) {
-  const state = { angle: "side", clips: {}, trims: {}, urls: {},
+  const state = { angle: "side", clips: {}, trims: {}, urls: {}, lenses: {},
                   stream: null, recorder: null, timer: null, tick: null };
   drawCapture(view, user, state);
   return () => teardown(state);       // the router calls this when you leave
@@ -93,6 +93,7 @@ function drawCapture(view, user, state) {
     <div class="rec-pill hidden" id="recpill"><span class="rec-dot"></span><span id="rectime">0:00</span></div>
   </div>
   <p class="hint" id="hint"></p>
+  <p class="lensnote hidden" id="lensnote"></p>
   <div class="anglehead"><span id="progress"></span></div>
   <div class="angles" id="angles">
     ${VIEWS.map((v) => `<button class="angle" data-a="${v.key}">
@@ -230,10 +231,16 @@ function drawCapture(view, user, state) {
       };
       state.stream = await navigator.mediaDevices
         .getUserMedia({ video: best, audio: false })
-        .catch(() => navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false }));
+        /* Last resort takes ANY camera. A phone with no rear camera, or one
+           that refuses the constraint, used to get the same "environment"
+           request twice and fail both times — no preview, no shutter, for a
+           device that would happily have filmed with the lens it has. */
+        .catch(() => navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false }))
+        .catch(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false }));
       cam.srcObject = state.stream;
       await cam.play().catch(() => {});
       msg.classList.add("hidden");
+      fitStage();
     } catch (e) {
       // No camera is not a dead end — you can still import what you filmed.
       msg.textContent = "No camera here — import a video instead.";
@@ -243,6 +250,45 @@ function drawCapture(view, user, state) {
     }
   }
 
+  /* WHAT THE CAMERA ACTUALLY GAVE US.
+     Not what we asked for — phones hand back whatever they have. The guide
+     boxes are drawn on the preview, so the preview has to be the recording:
+     the stage takes the track's own shape, and then everything inside the
+     frame on screen is inside the frame on disk.
+
+     Only shape and speed are kept. getSettings() also carries deviceId and
+     groupId, which are persistent per-origin identifiers for this rider's
+     hardware — those are never read, never stored and never sent. */
+  function lensOf() {
+    const t = state.stream?.getVideoTracks?.()[0];
+    if (!t) return null;
+    const g = t.getSettings?.() ?? {};
+    return {
+      facing: g.facingMode ?? null,
+      w: g.width ?? null, h: g.height ?? null,
+      fps: g.frameRate ? Math.round(g.frameRate) : null,
+    };
+  }
+
+  function fitStage() {
+    const stage = view.querySelector(".stage");
+    const lens = lensOf();
+    const w = cam.videoWidth || lens?.w, h = cam.videoHeight || lens?.h;
+    if (stage && w && h) stage.style.aspectRatio = `${w} / ${h}`;
+    /* The selfie lens is usually wider and softer than the rear one. Said
+       once, never enforced — plenty of riders can only reach the screen from
+       in front of the bike, and a read from the front camera beats no read. */
+    const note = view.querySelector("#lensnote");
+    if (note) {
+      const selfie = lens?.facing === "user";
+      note.textContent = selfie
+        ? "Front camera — it works, but the rear one is sharper and reads a little better."
+        : "";
+      note.classList.toggle("hidden", !selfie);
+    }
+  }
+  cam.onloadedmetadata = fitStage;
+
   view.querySelector("#angles").onclick = (e) => {
     const btn = e.target.closest(".angle");
     if (!btn || btn.disabled) return;
@@ -251,11 +297,19 @@ function drawCapture(view, user, state) {
     paint();
   };
 
+  /* THE GUIDE NEVER BLOCKS THE SHUTTER.
+     The frame and the line are help, not a gate. A rider whose bike will not
+     fit the box — a turbo in a narrow hallway, a phone propped on a shelf at
+     the wrong height — must still be able to film, and a slightly badly framed
+     clip we can measure and grade beats a perfect clip nobody could record.
+     The measurement no longer depends on the framing anyway; the guide is
+     there to make a good take easy, not to make a bad one impossible. */
   shoot.onclick = () => {
     if (isRecording()) { state.recorder.stop(); return; }
     if (!state.stream) return;
     err.textContent = "";
     const key = state.angle, chunks = [];
+    state.lenses[key] = lensOf();      // what this angle was actually shot on
     const recorder = new MediaRecorder(state.stream, recorderOptions());
     recorder.ondataavailable = (ev) => chunks.push(ev.data);
     recorder.onstop = () => {
@@ -347,6 +401,11 @@ async function runAnalysis(view, user, state) {
       (pct, msg) => { bar.style.width = pct + "%"; if (msg) stage.textContent = msg; },
       { history, heightCm: +localStorage.getItem("form_height_cm") || null });
     report.viewsCaptured = Object.keys(state.clips);
+    /* Which lens shot each angle, at what size and speed. Shape and speed
+       only — never deviceId. "Do the front-camera rides read differently?" is
+       a question about this rider's own numbers that we could not answer at
+       all before, and asking them to remember is not an answer. */
+    report.lenses = state.lenses;
 
     /* The extra views never overturn the side view — they add their own
        measurements and, where they agree, corroborate its fix. A view that

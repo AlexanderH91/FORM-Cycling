@@ -125,5 +125,58 @@ T('it is there through the lens and gone over a take',
 T('and nobody is asked to judge a height in mid-air any more',
   guide.noMoreGuessedDistance, '"saddle on this line" is checkable; "at saddle height" is not');
 
+/* The frame drawn on the preview has to be the frame that reaches the file.
+   The stage was a fixed 4:3 box with object-fit:cover, so a 16:9 phone camera
+   had its left and right edges cropped out of the preview while still being
+   recorded — a guide box on that preview describes a narrower frame than the
+   one going to disk, which is worse than drawing no box at all. */
+const honest = await page.evaluate(async () => {
+  const src = await (await fetch('/js/pages/analyze.js')).text();
+  const css = await (await fetch('/css/app.css')).text();
+  return {
+    stageTakesTheCameraShape: /stage\.style\.aspectRatio = `\$\{w\} \/ \$\{h\}`/.test(src),
+    fittedWhenTheStreamStarts: /await cam\.play\(\)[\s\S]{0,120}fitStage\(\)/.test(src)
+      && /cam\.onloadedmetadata = fitStage/.test(src),
+    fallsBackToAnyLens: /getUserMedia\(\{ video: true, audio: false \}\)/.test(src),
+    saysWhenItIsTheSelfieLens: /Front camera — it works/.test(src),
+    // ...and says it, rather than refusing to use it
+    neverRefusesTheSelfieLens: !/facing === "user"[^\n]*return|disabled = .*selfie/i.test(src),
+    recordsTheLens: /state\.lenses\[key\] = lensOf\(\)/.test(src)
+      && /report\.lenses = state\.lenses/.test(src),
+    /* getSettings() also carries deviceId and groupId — persistent per-origin
+       identifiers for this rider's hardware. Checked in the function that
+       reads the track, not across the file, because the comment beside it
+       names them in order to say they are not taken. */
+    noDeviceIds: !/deviceId|groupId/.test(src.slice(src.indexOf('function lensOf'), src.indexOf('function fitStage'))),
+    stillHasTheCoverRule: /object-fit:cover/.test(css),
+  };
+});
+T('the preview takes the camera\'s own shape, so the box is the real frame',
+  honest.stageTakesTheCameraShape && honest.fittedWhenTheStreamStarts,
+  'a 4:3 stage cropped a 16:9 camera out of its own guide');
+T('a phone with no rear camera still gets a preview', honest.fallsBackToAnyLens,
+  'the fallback used to ask for the same rear camera twice');
+T('the selfie lens is named, not refused',
+  honest.saysWhenItIsTheSelfieLens && honest.neverRefusesTheSelfieLens);
+T('which lens shot each angle travels with the report', honest.recordsTheLens);
+T('but never the hardware id that identifies the phone', honest.noDeviceIds,
+  'shape and speed only');
+
+/* The guide is help, not a gate. */
+const shutter = await page.evaluate(async () => {
+  const src = await (await fetch('/js/pages/analyze.js')).text();
+  const handler = src.slice(src.indexOf('shoot.onclick = () => {'), src.indexOf('recorder.onstop'));
+  return {
+    guards: handler.match(/if \(.*\) (return|\{ [^}]*return)/g) ?? [],
+    ruleWritten: /THE GUIDE NEVER BLOCKS THE SHUTTER/.test(src),
+    // nothing in the shutter path looks at the guide or the framing
+    mentionsGuide: /guide|gbox|gline|framed|inFrame/.test(handler),
+  };
+});
+T('you can record without being inside the frame', !shutter.mentionsGuide,
+  `the shutter checks only: ${shutter.guards.join(' / ') || 'nothing'}`);
+T('and the reason is written where someone would add a gate', shutter.ruleWritten,
+  'a badly framed clip we can measure beats a perfect one nobody could record');
+
 await b.close();
 finish();
