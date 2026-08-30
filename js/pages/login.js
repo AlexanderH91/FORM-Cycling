@@ -40,7 +40,7 @@ export function renderLogin(view) {
   </div>
 
   <div class="sect">Before your first analysis</div>
-  <div class="glass card"><h3>1 · Side view</h3><p>Phone at saddle height, 2–3 m away, whole bike and rider in frame. This view measures knee, hip, foot and your position.</p></div>
+  <div class="glass card"><h3>1 · Side view</h3><p>Stand back until the whole bike sits inside the frame on screen, then line the saddle up with the dashed line across the middle. This view measures knee, hip, foot and your position.</p></div>
   <div class="glass card"><h3>2 · Front view</h3><p>Phone at bar height, straight ahead. This view watches your knees track up and down.</p></div>
   <div class="glass card"><h3>3 · From behind</h3><p>Phone behind the rear wheel, light from the side — never a window straight behind you. This view watches shoulders and pelvis.</p></div>
   `;

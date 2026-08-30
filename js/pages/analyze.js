@@ -12,17 +12,24 @@ import { appbar } from "../ui.js";
 
 const VIEWS = [
   { key: "side",  label: "Side",   need: "required",
-    hint: "Phone at saddle height, 2–3 m away — whole bike and rider in frame. This is the view we measure.",
+    /* `online` is what to line up with the dashed centre line in the preview.
+       It replaces judging a height in the air: put the saddle on the line and
+       the phone is at saddle height, because the line is the lens's own eye
+       level. */
+    online: "Saddle on this line",
+    hint: "Whole bike inside the frame, saddle on the line — that puts the phone at saddle height without you guessing it.",
     title: "Side view", gives: "saddle height, hip fold, foot angle, cadence and fore/aft" },
   { key: "front", label: "Front",  need: "optional",
     /* Bar height was wrong guidance, and it was mine. At bar height the bars
        and the levers sit across exactly the part of the leg this view needs,
        so the model ends up guessing at knees it cannot see. Low and further
        back puts the legs in clear air. */
-    hint: "Phone low — about hub height — and 2–3 m in front. Knees and feet in clear view, not behind the bars.",
+    online: "Front hub on this line",
+    hint: "In front, down at hub height: front hub on the line. Low keeps your knees in clear air, not behind the bars.",
     title: "Front view", gives: "whether your knees track in or out, which no other angle can see" },
   { key: "rear",  label: "Behind", need: "optional",
-    hint: "Behind the rear wheel, light from the side — never a window straight behind you.",
+    online: "Rear hub on this line",
+    hint: "Behind the rear wheel, rear hub on the line, light from the side — never a window straight behind you.",
     title: "From behind", gives: "shoulder and pelvis rock, and whether you sit level" },
 ];
 
@@ -70,6 +77,18 @@ function drawCapture(view, user, state) {
   <div class="stage glass">
     <video id="cam" class="shot" playsinline muted autoplay></video>
     <video id="play" class="shot hidden" playsinline muted loop controls preload="auto"></video>
+    ${/* A frame to put the bike in, and a line to put the saddle on.
+          "Phone at saddle height, 2–3 m away" is a measurement asked of
+          somebody standing in a shed holding a phone; it is not something
+          anyone can judge, so every clip comes back framed slightly
+          differently and the numbers move with it. The centre line IS the
+          camera's own eye level — line the saddle up with it and the phone is
+          at saddle height by construction, with nothing to estimate. Dashed,
+          because it is a reference and not the rider (line grammar). */""}
+    <div class="guide" id="guide" aria-hidden="true">
+      <div class="gbox"></div>
+      <div class="gline"><span id="glabel"></span></div>
+    </div>
     <div class="stage-msg hidden" id="stagemsg"></div>
     <div class="rec-pill hidden" id="recpill"><span class="rec-dot"></span><span id="rectime">0:00</span></div>
   </div>
@@ -101,6 +120,7 @@ function drawCapture(view, user, state) {
   const $ = (q) => view.querySelector(q);
   const cam = $("#cam"), play = $("#play"), err = $("#err"), goBtn = $("#go");
   const shoot = $("#shoot"), retake = $("#retake"), trim = $("#trim");
+  const guide = $("#guide"), glabel = $("#glabel");
 
   const isRecording = () => !!state.recorder && state.recorder.state === "recording";
 
@@ -108,6 +128,7 @@ function drawCapture(view, user, state) {
     const v = viewOf(state.angle);
     const clip = state.clips[state.angle];
     $("#hint").textContent = v.hint;
+    glabel.textContent = v.online;
 
     for (const btn of view.querySelectorAll(".angle")) {
       const k = btn.dataset.a;
@@ -160,6 +181,7 @@ function drawCapture(view, user, state) {
     play.pause();
     play.classList.add("hidden");
     cam.classList.remove("hidden");
+    guide.classList.remove("hidden");
   }
 
   function showClip(key) {
@@ -170,6 +192,7 @@ function drawCapture(view, user, state) {
        rectangle behind a play button no matter what we seek to. */
     play.classList.remove("hidden");
     cam.classList.add("hidden");
+    guide.classList.add("hidden");   // a guide over footage already shot is noise
     play.src = url;
     play.load();
     play.onloadedmetadata = async () => {

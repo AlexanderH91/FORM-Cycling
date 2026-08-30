@@ -63,6 +63,47 @@ export function angleAt(a, b, c) {
   const n = Math.hypot(...v1) * Math.hypot(...v2) + 1e-9;
   return deg(Math.acos(Math.max(-1, Math.min(1, dot / n))));
 }
+/* THE SAME ANGLE, MEASURED WHERE THE CAMERA CANNOT REACH IT.
+
+   An angle read off the picture is an angle between two lines that have been
+   flattened onto the phone's sensor, so it carries the phone with it: hold the
+   camera a foot higher, a metre further back, ten degrees off square, or swap
+   the wide lens for the ultrawide, and the same leg in the same position reads
+   differently. Asking riders to place a phone identically every time is asking
+   for something nobody does — the phone slips, the ground is not level, the
+   front camera gets used because it is easier to see the screen.
+
+   The pose model already solves this and we were throwing it away. Alongside
+   the flattened landmarks it returns worldLandmarks: the same joints in metres
+   in three dimensions, centred on the hips, reconstructed rather than
+   projected. The angle between three of those is the angle the joint actually
+   made. It does not know where the phone was, so it cannot be moved by it.
+
+   The picture is still drawn from the flat landmarks — that is what is
+   underneath the rider in the video — so on a badly-placed phone the drawn
+   limb and the reported number can differ. That gap is not an error; it is the
+   size of the camera's lie, and the still says so rather than hiding it. */
+export function angleAt3D(a, b, c) {
+  if (!a || !b || !c) return null;
+  const v1 = [a.x - b.x, a.y - b.y, (a.z ?? 0) - (b.z ?? 0)];
+  const v2 = [c.x - b.x, c.y - b.y, (c.z ?? 0) - (b.z ?? 0)];
+  const dot = v1[0] * v2[0] + v1[1] * v2[1] + v1[2] * v2[2];
+  const n = Math.hypot(...v1) * Math.hypot(...v2) + 1e-9;
+  return deg(Math.acos(Math.max(-1, Math.min(1, dot / n))));
+}
+
+/* A world reading is only used when it is actually there and actually sane:
+   a leg bent past what a leg does means the depth axis lost the joint, and
+   the flat reading — camera and all — is the better of two bad answers. */
+function kneeFromWorld(w, side) {
+  if (!w) return null;
+  const j = SIDES[side](w);
+  const v = angleAt3D(j.hip, j.knee, j.ankle);
+  if (v == null) return null;
+  const bend = 180 - v;
+  return bend >= 0 && bend <= 160 ? bend : null;
+}
+
 const median = (a) => { const s = [...a].sort((x, y) => x - y); return s[s.length >> 1]; };
 const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
 const sd = (a) => { const m = mean(a); return Math.sqrt(mean(a.map((x) => (x - m) ** 2))); };
@@ -463,7 +504,7 @@ function gradeCapture(frames) {
       reason: `We could only find you in ${frames.seen} of the ${frames.sampled} frames we looked at. Get the whole bike and rider in frame, in decent light, and film again.` };
   if (visibility < CAPTURE.minVisibility)
     return { grade: "F", ...counted,
-      reason: "We found you, but your hip, knee and ankle were never clearly enough in view to measure. Move the phone to saddle height, 2–3 m away, and film again." };
+      reason: "We found you, but your hip, knee and ankle were never clearly enough in view to measure. Stand back until the whole bike is inside the frame on screen, put the saddle on the dashed line, and film again." };
 
   /* The squareness estimate is not trusted enough to suppress a measurement
      yet: it read 21° on footage with 99% detection and 92% visibility, which
@@ -1014,7 +1055,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
        is AT is what put the overlay a fraction of a pedal stroke away from the
        rider's leg. At 85 rpm a revolution is 0.7s, so 60ms is most of a
        thigh. */
-    if (p) seenFrames.push({ t: video.currentTime, L: SIDES.L(p), R: SIDES.R(p), hipL: p[23], hipR: p[24] });
+    /* The metric pose travels with the flat one. It costs nothing — the model
+       computed it either way — and it is what the knee angle is read from. */
+    const w = res.worldLandmarks?.[0] ?? null;
+    if (p) seenFrames.push({ t: video.currentTime, w, L: SIDES.L(p), R: SIDES.R(p), hipL: p[23], hipR: p[24] });
     onProgress(8 + (82 * i) / times.length);
   }
 
@@ -1040,7 +1084,14 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
         j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
         // How well the model saw the joints this frame's angles are built from.
         conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
-        kneeBend: 180 - angleAt(hip, knee, ankle),
+        /* Measured in three dimensions where it can be, so the number does
+           not move when the phone does. `kneeFlat` is the old picture-plane
+           reading, kept beside it: the difference between the two is how much
+           the camera was distorting this clip, which is worth knowing and was
+           previously invisible. */
+        kneeBend: kneeFromWorld(f.w, side) ?? (180 - angleAt(hip, knee, ankle)),
+        kneeFlat: 180 - angleAt(hip, knee, ankle),
+        fromWorld: kneeFromWorld(f.w, side) != null,
         hip: angleAt(sho, hip, knee),
         torso: deg(Math.atan2(Math.abs(sho.y - hip.y), Math.abs(sho.x - hip.x) + 1e-9)),
         toeDown: -deg(Math.atan2(heel.y - toe.y, Math.abs(toe.x - heel.x) + 1e-9)),
@@ -1063,7 +1114,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      clip length. Everything here is best-effort: a refinement that fails
      leaves the sweep's own numbers standing. */
   /* One reading of one frame with the fine model. */
-  function readFrame(p, t) {
+  function readFrame(p, t, w = null) {
     const raw = pickSide(p, side);
     const hip = sq(raw.hip), knee = sq(raw.knee), ankle = sq(raw.ankle);
     const sho = sq(raw.sho), heel = sq(raw.heel), toe = sq(raw.toe);
@@ -1072,7 +1123,9 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       t,
       j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
       conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
-      kneeBend: 180 - angleAt(hip, knee, ankle),
+      kneeBend: kneeFromWorld(w, side) ?? (180 - angleAt(hip, knee, ankle)),
+      kneeFlat: 180 - angleAt(hip, knee, ankle),
+      fromWorld: kneeFromWorld(w, side) != null,
       hip: angleAt(sho, hip, knee),
       torso: deg(Math.atan2(Math.abs(sho.y - hip.y), Math.abs(sho.x - hip.x) + 1e-9)),
       toeDown: -deg(Math.atan2(heel.y - toe.y, Math.abs(toe.x - heel.x) + 1e-9)),
@@ -1098,10 +1151,18 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     } catch (e) { timing.fineModelError = e?.message ?? "could not load"; return null; }
   }
 
+  /* Both poses come back together. Reading the re-checked strokes flat while
+     the rest of the clip was read in three dimensions would put two different
+     measurements into one median — the same fault as mixing two models, which
+     cost ±12.5° the last time it happened. */
   async function detectAt(fine, t) {
     if (!(await seekTo(video, t, 3000))) return null;
     await paintedFrame(video, 400);
-    try { return fine.detect(video).landmarks?.[0] ?? null; } catch { return null; }
+    try {
+      const r = fine.detect(video);
+      const p = r.landmarks?.[0];
+      return p ? { p, w: r.worldLandmarks?.[0] ?? null } : null;
+    } catch { return null; }
   }
 
   /* Re-read the strokes, and look either side of each one for where the ankle
@@ -1121,10 +1182,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       for (let k = -steps; k <= steps; k++) {
         const t = rows[i].t + k * step;
         if (t < t0 || t > end) continue;
-        const p = await detectAt(fine, t);
+        const got = await detectAt(fine, t);
         reads++;
-        if (!p) continue;
-        const m = readFrame(p, t);
+        if (!got) continue;
+        const m = readFrame(got.p, t, got.w);
         const better = !best || (wantLow ? m.ankleY > best.ankleY : m.ankleY < best.ankleY);
         if (better) best = m;
       }
@@ -1217,6 +1278,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   const tdcM = measured(tdcIdx);
   const allIdx = rows.map((_, i) => i);
   const kneeBDC = stat(bdcM, "kneeBend");
+  /* The same strokes read the old way. Not shown to the rider — it is how we
+     find out whether measuring in three dimensions actually steadied the
+     number across rides, rather than assuming it did. */
+  const kneeFlatBDC = stat(bdcM, "kneeFlat");
   const toeBDC = stat(bdcM, "toeDown");
   const hipTDC = tdcM.length ? stat(tdcM, "hip") : null;
   const torso = stat(allIdx, "torso");
@@ -1352,7 +1417,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   const specs = [
     {
       key: "knee", row: kneeRow, tries: kneeRanked,
-      caption: `Knee ${rows[kneeRow].kneeBend.toFixed(0)}\u00b0 on this stroke. The card's ${k}\u00b0 is the middle of ${kneeBDC.n} strokes like it.`,
+      caption: `Knee ${rows[kneeRow].kneeBend.toFixed(0)}\u00b0 on this stroke. The card's ${k}\u00b0 is the middle of ${kneeBDC.n} strokes like it.${
+        rows[kneeRow].fromWorld && Math.abs(rows[kneeRow].kneeBend - rows[kneeRow].kneeFlat) >= 3
+          ? ` The lines are drawn flat on the video, so they look like ${rows[kneeRow].kneeFlat.toFixed(0)}\u00b0 — the difference is your phone's angle, which the measurement sees past and a flat picture cannot.`
+          : ""}`,
       draw: (ctx, j, w, h) => {
         if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
         limb(ctx, [j.hip, j.knee, j.ankle], kneeColour, w, h);
@@ -1491,6 +1559,17 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     refined: { strokes: refined, top: refinedTop, model: POSE_MODEL.fine, sweep: POSE_MODEL.sweep,
                ...timing, totalMs: Math.round(performance.now() - analysisStart) },
     stillsFail,
+    /* How this clip was read, and what the camera was doing to it. The gap
+       between the metric angle and the picture-plane one is the distortion
+       this particular phone placement introduced — recorded per ride, because
+       "is the spread the camera or is it us?" is a question that needs data
+       across rides and had none. */
+    howRead: {
+      space: bdcM.every((r) => r.fromWorld) ? "3d" : bdcM.some((r) => r.fromWorld) ? "mixed" : "flat",
+      flat: kneeFlatBDC ? +kneeFlatBDC.value.toFixed(1) : null,
+      flatSd: kneeFlatBDC ? +kneeFlatBDC.sd.toFixed(1) : null,
+      gap: kneeFlatBDC ? +(kneeBDC.value - kneeFlatBDC.value).toFixed(1) : null,
+    },
     kneeBendBDC: { value: +kneeBDC.value.toFixed(1), sd: +kneeBDC.sd.toFixed(1),
                    strokes: kneeBDC.n, of: kneeBDC.of, centre: "median",
                    mean: +kneeBDC.value.toFixed(1) },   // .mean kept for rows written before this

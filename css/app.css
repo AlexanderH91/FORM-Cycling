@@ -404,6 +404,18 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .mbody p{margin:0;font-size:14px}
 .mbody .cardshot{margin:0 0 12px}
 
+/* The framing guide: a box to put the bike in and a line to put the saddle on.
+   Dashed throughout, because it is a reference and never the rider. */
+.guide{position:absolute;inset:0;pointer-events:none}
+.guide.hidden{display:none}
+.gbox{position:absolute;left:5%;right:5%;top:15%;bottom:15%;
+  border:1.5px dashed rgba(242,194,48,.5);border-radius:10px}
+.gline{position:absolute;left:5%;right:5%;top:50%;border-top:1.5px dashed rgba(242,194,48,.9)}
+.gline span{position:absolute;top:0;left:50%;transform:translate(-50%,-50%);
+  background:rgba(11,11,11,.78);color:var(--gold);white-space:nowrap;
+  font-family:var(--mono);font-size:10px;letter-spacing:.13em;text-transform:uppercase;
+  padding:4px 9px;border-radius:99px}
+
 /* capture: the three angles as a checklist, and the next one asked for by name */
 .anglehead{font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
   color:var(--muted);margin:2px 0 8px}

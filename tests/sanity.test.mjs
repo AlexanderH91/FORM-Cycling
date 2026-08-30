@@ -149,7 +149,9 @@ const anatomy = await page.evaluate(async () => {
     checksMeasurement: /const legs = frontLegs\(p, sq\);/.test(src),
     checksStill: /const legs = frontLegs\(p, squareUp\(ar\)\);/.test(src),
     checksRear: /const upright = Math\.min\(p\[11\]\.y, p\[12\]\.y\) < Math\.min\(p\[23\]\.y, p\[24\]\.y\)/.test(src),
-    framingFixed: /hub height/.test(pageSrc) && !/Phone at bar height/.test(pageSrc),
+    /* The instruction, not the comment explaining why it changed: "bar height"
+       still appears in the note above it, and should. */
+    framingFixed: /down at hub height/.test(pageSrc) && !/hint: "[^"]*bar height/.test(pageSrc),
   };
 });
 T('a real leg passes: knee below hip, ankle below knee', anatomy.realLeg);
