@@ -182,6 +182,10 @@ export function kneeOverAxle(rows, fps) {
     const femur = median(three.map((i) => rows[i].femur));
     if (!(femur > 1e-3)) return null;
     const mid = median(offs);
+    /* No rider sits this far off. Past a third of a thigh it is the model
+       having put the toe or the heel somewhere that is not the foot, and a
+       number built on that should not reach a card at all. */
+    if (Math.abs(mid / femur) > 0.35) return null;
     return {
       // in thigh-lengths, which needs no assumption about the rider at all
       ofFemur: mid / femur,
@@ -1781,9 +1785,14 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       ...(foreaft ? [{
         name: "Knee over the pedal, 3 o'clock", shot: shots.get("foreaft"),
         means: "Where your knee sits over the pedal changes how the work splits between quads and glutes, and how much of your weight ends up on your hands. Further forward leans on the quads and the front of the knee; further back brings in the glutes and hamstrings and takes weight off the bars.",
+        /* Centimetres when we can work them out, and the position in words
+           when we cannot. "+25% of thigh" was neither: not a unit anyone
+           thinks in, and a decimal place of precision on a figure we have
+           already said is approximate. */
         value: foreaft.cm != null
           ? `${foreaft.cm > 0 ? "+" : ""}${foreaft.cm.toFixed(1)} cm`
-          : `${foreaft.ofFemur > 0 ? "+" : ""}${(foreaft.ofFemur * 100).toFixed(0)}% of thigh`,
+          : Math.abs(foreaft.ofFemur) < 0.07 ? "Over the pedal"
+          : foreaft.ofFemur > 0 ? "Ahead of the pedal" : "Behind the pedal",
         note: `A plus sign means your knee is ahead of the pedal axle with the cranks level. Fitters usually start with the two roughly stacked and then move the saddle to suit the rider, so this is a starting point rather than something to hit — we do not score it. Measured over ${foreaft.n} strokes.${
           foreaft.cm != null
             ? " The centimetres are close rather than exact: they come from your height and from where the pedal axle normally sits under a foot, neither of which we can see in the video."
@@ -1800,8 +1809,12 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
 /* "Close" is a real answer: the band edge sits inside the margin of error on
    the reading, so neither side of the line has been earned yet. It is meant to
    be temporary — pooling rides is what retires it. */
+/* The chip beside the number, in words that carry their own meaning. "Close"
+   was ours: close to what, and is close good? "At the edge" says where the
+   rider is; "In range" says they are fine; "Worth a look" says it is the one
+   to read. Nobody has to learn them. */
 function word(v) {
-  return v === "ok" ? "OK" : v === "borderline" ? "Close" : v ? "Watch" : "";
+  return v === "ok" ? "In range" : v === "borderline" ? "At the edge" : v ? "Worth a look" : "";
 }
 
 // A number measured through a bad camera angle keeps its value and loses its verdict.

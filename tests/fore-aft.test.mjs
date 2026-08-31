@@ -67,5 +67,34 @@ T('it measures across several strokes, not one', r.aheadN >= 3, `${r.aheadN} str
 T('too few strokes returns nothing rather than a number', r.tooShort === null, `got ${JSON.stringify(r.tooShort)}`);
 T('centimetres are derived, and stay plausible',
   r.cmAt180 > 1 && r.cmAt180 < 12, `${r.cmAt180} cm for a 180 cm rider (thigh ratio ${r.ratio}, axle ${r.axle})`);
+/* What the card actually puts in its value slot. It read "+25% of thigh",
+   which is not a unit anyone thinks in and carries a decimal of precision on a
+   figure the same card calls approximate. */
+const shown = await page.evaluate(async () => {
+  const { kneeOverAxle } = await import('/js/analysis.js');
+  /* A stroke set where the knee sits a long way from the axle — far enough
+     that it is the model having lost the foot, not a rider position. */
+  const wild = Array.from({ length: 40 }, (_, i) => {
+    const a = (i / 10) * 2 * Math.PI;
+    return { conf: 0.9, femur: 0.20,
+      x: { sho: 0.30, hip: 0.50, knee: 0.30, ankle: 0.42 + 0.10 * Math.cos(a),
+           heel: 0.52, toe: 0.44 } };
+  });
+  return { wild: kneeOverAxle(wild, 15) };
+});
+T('a knee further from the axle than a rider ever sits reports nothing',
+  shown.wild === null, 'there was no ceiling on this at all');
+
+{
+  const src = await (await fetch(`${BASE}/js/analysis.js`)).text();
+  // the phrase survives in the note explaining why it went; the code must not
+  T('the value is centimetres, or a position in words — never "% of thigh"',
+    !/ofFemur \* 100/.test(src) && /"Over the pedal"/.test(src)
+      && /"Ahead of the pedal"/.test(src) && /"Behind the pedal"/.test(src));
+  T('and the chips beside every number say what they mean',
+    /=== "ok" \? "In range"/.test(src) && /"At the edge"/.test(src) && /"Worth a look"/.test(src),
+    '"Close" was ours — close to what, and is close good?');
+}
+
 await b.close();
 finish();
