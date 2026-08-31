@@ -1460,13 +1460,6 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       change: true,
       why: `Every one of those rides landed between ${pooled.lo.toFixed(0)}° and ${pooled.hi.toFixed(0)}°. That agreement across separate days and separate camera setups is the evidence; no single ride could give it. This close to the edge the difference is small and comfort should decide it. ${consequence} If nothing aches and the power feels good where you are, this is a fine place to ride.`,
     };
-  else if (pooled.settled && pooledVerdict === "ok")
-    fix = {
-      title: "Saddle height holds up",
-      line: `Across ${pooled.rides} rides your knee bends ${pv}° at the bottom, inside the usual ${kLo}–${kHi}° every time.`,
-      cue: "Nothing to change here. Film again after any change to the bike or the shoes.",
-      why: "Saddle height is the setting the rest of a fit is built on, so having it settled means the next thing worth looking at is how your knees track — which is the front view.",
-    };
   else if (pooledVerdict === "low" || pooledVerdict === "high")
     fix = {
       title: tooStraight ? "Saddle looks high" : "Saddle looks low",
@@ -1483,7 +1476,15 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       again: true,
       why: `Over ${kneeBDC.n} strokes we can place you to about ${kU.toFixed(1)}° either way, which still reaches across the edge. Moving a saddle on a reading this close is guesswork, and guesswork on saddle height is how people end up chasing knee pain around the bike. We add your rides together and how closely they agree is what settles it — one more costs ten minutes.`,
     };
-  else if (toeBDC && toeVerdict === "high" && toeBDC.value > BANDS.footToeDown6[1] + 3)
+  /* SADDLE HEIGHT IS SETTLED AND GOOD FROM HERE DOWN.
+     It used to stop at that news: a card headed "This ride's fix" saying
+     "Nothing to change here", which is not a fix and not an insight — it is
+     the most valuable slot in the report spent on a non-event. Good saddle
+     height is worth knowing and it is already on the card below and on the
+     home screen; the headline should move to whatever IS worth doing next.
+     Ranked by how much it changes about the riding: what the foot does at the
+     bottom, then how shut the hip is at the top, then cadence. */
+  else if (toeBDC && toeVerdict === "high")
     fix = {
       title: "Very toe-down at the bottom",
       line: `Your foot points ${toeBDC.value.toFixed(0)}° down at the bottom of the stroke, where most riders are between ${BANDS.footToeDown6[0]}° and ${BANDS.footToeDown6[1]}°.`,
@@ -1491,12 +1492,42 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       change: true,      // a change to how you ride is still worth a date
       why: "Pointing the toe hard at the bottom does the work with the calf instead of the big muscles above the knee, and the calf is a much smaller engine that tires sooner. It also reads as a saddle slightly too high, so it is worth settling alongside the number above.",
     };
+  else if (toeBDC && toeVerdict === "low")
+    fix = {
+      title: "Your heel drops through the bottom",
+      line: `Your foot sits ${toeBDC.value.toFixed(0)}° toe-down at the bottom of the stroke, where most riders are between ${BANDS.footToeDown6[0]}° and ${BANDS.footToeDown6[1]}°.`,
+      cue: "Let the toe fall a little as you come through the bottom, rather than holding the heel down.",
+      change: true,
+      why: "A heel held down through the bottom shortens how far the ankle can give, so the leg has to reach with the hip instead and the calf never gets to add anything to the end of the push. Letting the foot roll through gives you the last part of the stroke back.",
+    };
+  else if (hipTDC && verdictFor(hipTDC, BANDS.hipTDC) === "low")
+    fix = {
+      title: "You are folded shut at the top",
+      line: `At the top of each stroke your thigh closes to ${hipTDC.value.toFixed(0)}° against your torso, where fitters work to ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}°.`,
+      cue: "Try the saddle back 5 mm, or the bars up one spacer — whichever your bike makes easy.",
+      change: true,
+      why: "When the hip runs out of room before the pedal reaches the top, the stroke stalls there instead of carrying through: riders feel it as a catch, or as not being able to get low without the power falling away. It is bought back with saddle setback and bar height, not by pushing harder. Saddle height is settled, so this is the next thing that changes how the stroke feels.",
+    };
+  else if (cadence < BANDS.cadence[0] - 8 || cadence > BANDS.cadence[1] + 8)
+    fix = {
+      title: cadence < BANDS.cadence[0] ? "You are grinding a big gear" : "You are spinning very fast",
+      line: `You pedalled at ${cadence.toFixed(0)} rpm, where experienced riders mostly settle between ${BANDS.cadence[0]} and ${BANDS.cadence[1]}.`,
+      cue: cadence < BANDS.cadence[0]
+        ? "Drop a gear or two and hold the same speed for a few minutes at a time."
+        : "Take a gear or two and hold the same speed for a few minutes at a time.",
+      change: true,
+      why: cadence < BANDS.cadence[0]
+        ? "Every stroke at a low cadence asks more of the leg itself, so the muscles carry the effort and tire before your breathing does. Spinning shifts some of that onto your heart and lungs, which recover between strokes and your quads do not — most riders find the last hour of a long day is where they notice it."
+        : "Spinning very fast hands the effort to your heart and lungs and keeps it there. It is not wrong, but a long way above your natural cadence costs you when the breathing is what is already limiting you — on a climb, or at the end of a hard hour.",
+    };
   else
     fix = {
-      title: "Position holds up — keep riding",
-      line: `Knee ${k}° at the bottom, cadence ${cadence.toFixed(0)} rpm — both are where experienced riders sit.`,
-      cue: "Film again in a month, or after any change to the bike.",
-      why: "Nothing here is costing you power or comfort. The next gains are in how your knees track and how level you sit, which need the front and rear views.",
+      /* Nothing to prescribe, so the card stops calling itself a fix. */
+      kicker: "Where you are",
+      title: "Nothing here is holding you back",
+      line: `Knee ${k}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""}, foot and hip both where fitters want them, cadence ${cadence.toFixed(0)} rpm. Your leg is finishing every push with the big muscles above the knee.`,
+      cue: "Ride it. Film again in a month, or the day after anything on the bike moves.",
+      why: "This is the position the rest of a fit is built on, and it is settled — which means the gains left are in things the side view cannot see: whether your knees track straight, and whether you sit level. Both need the other two angles.",
     };
 
   /* The picture has to be of the stroke the number describes, so show the one

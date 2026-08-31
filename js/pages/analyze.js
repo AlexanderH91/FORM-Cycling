@@ -647,7 +647,7 @@ export function drawReport(view, r, clips) {
       </div>` : ""}
     <div class="glass card" style="border-left:3px solid ${r.provisional ? "#E0603A" : "var(--gold)"}">
       <div class="sect" style="margin:0 0 6px${r.provisional ? ";color:#E0603A" : ""}">${
-        r.provisional ? "Provisional read" : "This ride's fix"}</div>
+        r.provisional ? "Provisional read" : f.kicker ?? "This ride's fix"}</div>
       ${/* What we found, then what to do — one sentence each. The reasoning
             behind it folds away, exactly like the measurement cards below.
             This card used to print all of it at once, and sixteen lines of

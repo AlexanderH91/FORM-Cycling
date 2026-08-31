@@ -118,10 +118,30 @@ T('a fix that wants another ride offers the camera, not a logbook',
   const block = src.slice(src.indexOf('  let fix;'), src.indexOf('/* The picture has to be of the stroke'));
   const fixes = (block.match(/\n    fix = \{/g) || []).length;
   const wants = (block.match(/\n      (change|again): true,/g) || []).length;
-  const quiet = ['Saddle height holds up', 'Position holds up'];
+  /* One branch deliberately asks for nothing: the one that found nothing to
+     prescribe. Every other branch must say which button it wants, or it
+     silently ends up with none. */
   T('every fix says whether it wants a change logged or another ride',
-    fixes - wants === quiet.length,
-    `${fixes} fixes, ${wants} ask for something, ${fixes - wants} deliberately ask for nothing`);
+    fixes - wants === 1,
+    `${fixes} fixes, ${wants} ask for something, ${fixes - wants} deliberately asks for nothing`);
+}
+
+/* The most valuable slot in the report cannot be spent on a non-event. It
+   was: "THIS RIDE'S FIX / Saddle height holds up / Try: nothing to change
+   here". Good saddle height is worth knowing and it is on the card below and
+   on the home screen — the headline moves to whatever is worth doing next. */
+{
+  const src = await (await fetch(`${BASE}/js/analysis.js`)).text();
+  const block = src.slice(src.indexOf('  let fix;'), src.indexOf('/* The picture has to be of the stroke'));
+  T('a settled, good saddle hands the headline on rather than keeping it',
+    !/title: "Saddle height holds up"/.test(block),
+    'it used to stop the ladder dead at good news');
+  T('and there is somewhere for it to go',
+    /toeVerdict === "high"/.test(block) && /toeVerdict === "low"/.test(block)
+      && /BANDS\.hipTDC\) === "low"/.test(block) && /cadence < BANDS\.cadence\[0\] - 8/.test(block),
+    'foot at the bottom, hip at the top, then cadence');
+  T('and when there is genuinely nothing, the card stops calling itself a fix',
+    /kicker: "Where you are"/.test(block) && /Nothing here is holding you back/.test(block));
 }
 
 await b.close();
