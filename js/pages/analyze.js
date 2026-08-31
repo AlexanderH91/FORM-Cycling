@@ -105,6 +105,10 @@ function drawCapture(view, user, state) {
       </svg>
       <div class="gline"><span id="glabel"></span></div>
     </div>
+    <div class="turnphone hidden" id="turnphone">
+      <span class="turnico">⟳</span>Turn your phone sideways — a bike is wider
+      than it is tall, so sideways puts about twice as much of the picture on you
+    </div>
     <div class="stage-msg hidden" id="stagemsg"></div>
     <div class="rec-pill hidden" id="recpill"><span class="rec-dot"></span><span id="rectime">0:00</span></div>
   </div>
@@ -148,6 +152,7 @@ function drawCapture(view, user, state) {
     glabel.textContent = v.online;
     // The ghost is a side profile, so it only helps on the side view.
     view.querySelector("#gbike").classList.toggle("hidden", state.angle !== "side");
+    fitGuide();
 
     for (const btn of view.querySelectorAll(".angle")) {
       const k = btn.dataset.a;
@@ -259,6 +264,7 @@ function drawCapture(view, user, state) {
       await cam.play().catch(() => {});
       msg.classList.add("hidden");
       showLensNote();
+      fitGuide();
     } catch (e) {
       // No camera is not a dead end — you can still import what you filmed.
       msg.textContent = "No camera here — import a video instead.";
@@ -296,6 +302,36 @@ function drawCapture(view, user, state) {
      SUBSET of what is recorded: a box drawn inside it is inside the frame with
      room to spare, and the middle of the preview is exactly the middle of the
      recording. The guide was always conservative, never loose. */
+  /* THE GUIDE HAS TO BE THE SHAPE OF THE RECORDING.
+     It was a landscape box drawn over a card of our own choosing, while a
+     phone held upright films 9:16 — so it asked a rider to fit a bike into a
+     wide frame that the camera was never going to produce. Size it to the
+     video's own rectangle instead: object-fit:contain shows the whole frame,
+     letterboxed, and the guide is laid over exactly that. Whatever shape the
+     camera gives, the box is that shape. */
+  function fitGuide() {
+    const stage = view.querySelector(".stage");
+    const vw = cam.videoWidth, vh = cam.videoHeight;
+    if (!stage || !vw || !vh) return;
+    const sw = stage.clientWidth, sh = stage.clientHeight;
+    const scale = Math.min(sw / vw, sh / vh);
+    const w = vw * scale, h = vh * scale;
+    guide.style.left = `${Math.round((sw - w) / 2)}px`;
+    guide.style.top = `${Math.round((sh - h) / 2)}px`;
+    guide.style.width = `${Math.round(w)}px`;
+    guide.style.height = `${Math.round(h)}px`;
+
+    /* And a bike is a landscape object. Filmed upright it lands in a tall
+       narrow frame with the rider small in the middle of it, which is worse
+       for us to read and worse to look at. Say so — once, on the preview,
+       where it can be acted on — and never stop anyone filming upright. */
+    const turn = view.querySelector("#turnphone");
+    if (turn) turn.classList.toggle("hidden", vh <= vw);
+  }
+  cam.addEventListener("loadedmetadata", fitGuide);
+  cam.addEventListener("resize", fitGuide);
+  addEventListener("resize", fitGuide);
+
   function showLensNote() {
     /* The selfie lens is usually wider and softer than the rear one. Said
        once, never enforced — plenty of riders can only reach the screen from
@@ -310,7 +346,7 @@ function drawCapture(view, user, state) {
       note.classList.toggle("hidden", !selfie);
     }
   }
-  cam.onloadedmetadata = showLensNote;
+  cam.addEventListener("loadedmetadata", showLensNote);
 
   view.querySelector("#angles").onclick = (e) => {
     const btn = e.target.closest(".angle");

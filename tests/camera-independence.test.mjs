@@ -134,16 +134,27 @@ const honest = await page.evaluate(async () => {
   const src = await (await fetch('/js/pages/analyze.js')).text();
   const css = await (await fetch('/css/app.css')).text();
   return {
-    /* The stage keeps its own shape, full width. Taking the camera's shape
-       turned an upright phone's 9:16 stream into a narrow column down half
-       the screen — and the crop it was meant to fix was never a problem:
-       object-fit:cover trims symmetrically toward the middle, so the preview
-       is a CENTRED SUBSET of the recording. A box inside that subset is
-       inside the frame with room to spare. */
+    /* The CARD keeps its own shape, full width — a stage sized to a 9:16
+       stream became a column down half the screen. But the whole frame is
+       shown inside it, letterboxed, and the GUIDE is laid over the video's
+       own rectangle. So the box is always the shape the camera is actually
+       recording, and the card still looks like a card. */
     stageKeepsItsOwnShape: !/stage\.style\.aspectRatio/.test(src)
       && /\.stage\{[^}]*aspect-ratio:4\/3/.test(css),
-    lensNoteRuns: /await cam\.play\(\)[\s\S]{0,120}showLensNote\(\)/.test(src)
-      && /cam\.onloadedmetadata = showLensNote/.test(src),
+    showsTheWholeFrame: /\.shot\{[^}]*object-fit:contain/.test(css),
+    guideTracksTheVideo: /const scale = Math\.min\(sw \/ vw, sh \/ vh\)/.test(src)
+      && /guide\.style\.width = /.test(src),
+    refitOnEveryChange: /cam\.addEventListener\("loadedmetadata", fitGuide\)/.test(src)
+      && /addEventListener\("resize", fitGuide\)/.test(src),
+    // an upright frame is a bad frame for a bike, and says so without blocking
+    asksForLandscape: /Turn your phone sideways/.test(src)
+      && /turn\.classList\.toggle\("hidden", vh <= vw\)/.test(src),
+    /* addEventListener, not onloadedmetadata =. Two things need that event
+       now — the lens note and the guide's sizing — and an assignment would
+       have silently thrown one of them away. */
+    lensNoteRuns: /await cam\.play\(\)[\s\S]{0,160}showLensNote\(\)/.test(src)
+      && /cam\.addEventListener\("loadedmetadata", showLensNote\)/.test(src)
+      && !/cam\.onloadedmetadata =/.test(src),
     /* It reads the track it talks about. Leaving `lens` undefined here threw
        inside startCamera's try, which disabled the shutter and put "camera
        unavailable" on the screen for every rider. */
@@ -169,8 +180,14 @@ const honest = await page.evaluate(async () => {
   };
 });
 T('the preview is a full-width card, not a column down half the screen',
-  honest.stageKeepsItsOwnShape && honest.lensNoteRuns && honest.lensNoteReadsTheLens,
-  'cover crops toward the middle, so a box inside the preview is inside the frame');
+  honest.stageKeepsItsOwnShape && honest.lensNoteRuns && honest.lensNoteReadsTheLens);
+T('and it shows the whole recorded frame, not the middle of it',
+  honest.showsTheWholeFrame, 'letterboxed, so nothing recorded is off-screen');
+T('the guide is the shape the camera is actually recording',
+  honest.guideTracksTheVideo && honest.refitOnEveryChange,
+  'it was a landscape box over a 9:16 stream — a frame the camera never produces');
+T('and an upright phone is told a bike is wider than it is tall',
+  honest.asksForLandscape, 'said on the preview, never enforced');
 T('the guide draws a bike to line up with, not a part to look up',
   honest.ghostBike && honest.ghostOnlyOnTheSideView && honest.noBikeJargon,
   'its saddle sits on the line, so matching it sets the phone height');

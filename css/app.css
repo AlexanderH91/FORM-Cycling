@@ -173,7 +173,7 @@ label{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform
    that does not show the actual frame is worse than no guide. */
 .stage{position:relative;padding:0;overflow:hidden;border-radius:20px;background:#000;
   aspect-ratio:4/3;max-height:38dvh;display:flex;align-items:center;justify-content:center}
-.shot{width:100%;height:100%;object-fit:cover;display:block;background:#000}
+.shot{width:100%;height:100%;object-fit:contain;display:block;background:#000}
 .lensnote{margin:8px 2px 0;font-size:12.5px;color:var(--gold)}
 .stage-msg{position:absolute;inset:auto 16px;text-align:center;color:var(--muted);font-size:14px}
 .rec-pill{position:absolute;top:12px;left:12px;display:flex;align-items:center;gap:2px;
@@ -419,6 +419,11 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 /* The framing guide: a box to put the bike in and a line to put the saddle on.
    Dashed throughout, because it is a reference and never the rider. */
 .guide{position:absolute;inset:0;pointer-events:none}
+.turnphone{position:absolute;left:10px;right:10px;bottom:10px;display:flex;gap:8px;
+  align-items:center;background:rgba(11,11,11,.82);color:var(--gold);border-radius:12px;
+  padding:9px 12px;font-size:12.5px;line-height:1.35;pointer-events:none}
+.turnphone.hidden{display:none}
+.turnico{font-size:16px;line-height:1}
 .guide.hidden{display:none}
 .gbox{position:absolute;left:5%;right:5%;top:15%;bottom:15%;
   border:1.5px dashed rgba(242,194,48,.5);border-radius:10px}
