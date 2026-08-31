@@ -22,6 +22,7 @@ const shape = await page.evaluate(async () => {
       line: 'Your knee has read anywhere from 27° to 39° across 9 rides. Your saddle did not move that much — the camera did.',
       cue: 'Phone at saddle height, square to the side of the bike, same spot every time.',
       why: 'That spread is wider than the whole 30–40° window we are trying to place you in, which means the reads disagree rather than that you ride inconsistently. It is worth the ten minutes because everything else waits on it.',
+      again: true,
     },
     cards: [{ name: 'Cadence', value: '85 rpm', means: 'Spinning faster shifts the effort off your legs and onto your heart and lungs.', note: 'n' }],
   }, null);
@@ -53,7 +54,9 @@ const shape = await page.evaluate(async () => {
     openText: card.textContent.replace(/\s+/g, ' ').trim(),
     tapTarget: more.getBoundingClientRect().height,
     prescriptions: document.querySelectorAll('.card .try').length,
+    // this fix asks for another ride, so that is the button it should carry
     hasLogButton: !!document.getElementById('madeit'),
+    offersAnother: [...document.querySelectorAll('.card a.btn')].some((a) => /Film another ride/.test(a.textContent)),
   };
 });
 
@@ -72,8 +75,54 @@ T('the reasoning is one tap away, not gone', shape.opensOnTap &&
   shape.openText.includes('worth the ten minutes'), 'What that gets you');
 T('the toggle is thumb-sized', shape.tapTarget >= 24, `${Math.round(shape.tapTarget)}px`);
 T('still exactly one prescription on the screen', shape.prescriptions === 1);
-T('and still a way to say you made the change', shape.hasLogButton);
+T('and the way on is the one this fix asked for',
+  shape.offersAnother && !shape.hasLogButton,
+  'it wants another ride, so it offers the camera rather than a logbook entry');
 T('no page errors', errs.length === 0, errs.join(' | ') || 'clean');
+
+/* The button under the fix has to answer the cue. "Nothing to change here"
+   sat above "I made this change" because the button was rendered for every
+   fix, whatever it had just asked for. */
+const buttons = await page.evaluate(async () => {
+  const { drawReport } = await import('/js/pages/analyze.js');
+  const render = (fix) => {
+    drawReport(document.getElementById('view'), {
+      strokes: 20, cadence: 85, trim: [0, 2], keyframes: [], viewsCaptured: ['side'], fix,
+      cards: [{ name: 'Cadence', value: '85 rpm', means: 'Spinning faster shifts the effort off your legs and onto your heart and lungs.', note: 'n' }],
+    }, null);
+    return {
+      logs: !!document.getElementById('madeit'),
+      films: [...document.querySelectorAll('.card a.btn')].some((a) => /Film another ride/.test(a.textContent)),
+    };
+  };
+  return {
+    nothing: render({ title: 'Saddle height holds up', line: 'l',
+                      cue: 'Nothing to change here. Film again after any change to the bike or the shoes.' }),
+    moves:   render({ title: 'Saddle looks high', line: 'l',
+                      cue: 'Lower the saddle 5 mm, ride a minute, film again.', change: true }),
+    refilm:  render({ title: "We can't call your saddle height yet", line: 'l',
+                      cue: 'Film one more from the side.', again: true }),
+  };
+});
+T('a fix that asks for nothing offers no button',
+  !buttons.nothing.logs && !buttons.nothing.films,
+  '"Nothing to change here" had "I made this change" under it');
+T('a fix that prescribes a change offers to log the date',
+  buttons.moves.logs && !buttons.moves.films, 'no date, no before and after');
+T('a fix that wants another ride offers the camera, not a logbook',
+  buttons.refilm.films && !buttons.refilm.logs);
+
+/* And every branch has to say which it is, or it silently gets neither. */
+{
+  const src = await (await fetch(`${BASE}/js/analysis.js`)).text();
+  const block = src.slice(src.indexOf('  let fix;'), src.indexOf('/* The picture has to be of the stroke'));
+  const fixes = (block.match(/\n    fix = \{/g) || []).length;
+  const wants = (block.match(/\n      (change|again): true,/g) || []).length;
+  const quiet = ['Saddle height holds up', 'Position holds up'];
+  T('every fix says whether it wants a change logged or another ride',
+    fixes - wants === quiet.length,
+    `${fixes} fixes, ${wants} ask for something, ${fixes - wants} deliberately ask for nothing`);
+}
 
 await b.close();
 

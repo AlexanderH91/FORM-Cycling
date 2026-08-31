@@ -660,11 +660,16 @@ export function drawReport(view, r, clips) {
         <span class="mtoggle">What that gets you<i>▾</i></span>
       </button>
       <div class="mbody" id="fixwhy" hidden><p class="why">${f.why}</p></div>` : ""}
-      ${/* Without a date for the change there is no before and no after, and
-            the Journey screen is just a fitness chart. FORM never assumes its
-            advice was taken — the rider says so. */""}
-      <button class="btn secondary" id="madeit">I made this change</button>
-      <div class="ok" id="madeitmsg"></div>
+      ${/* The button answers the cue, or there is no button. Without a date
+            for a change there is no before and no after, and the Journey
+            screen is just a fitness chart — so a prescribed change is worth
+            logging. But a fix that asked for another ride wants the camera,
+            not a logbook entry, and a fix that said "nothing to change here"
+            wants nothing at all. It offered "I made this change" under all
+            three. */""}
+      ${f.change ? `<button class="btn secondary" id="madeit">I made this change</button>
+      <div class="ok" id="madeitmsg"></div>` : ""}
+      ${f.again ? `<a class="btn secondary" href="#/analyze">Film another ride</a>` : ""}
       ${r.provisional ? `<p>The numbers below are shown without verdicts.</p>` : ""}
     </div>
     ${/* Stills live inside the card that claims each number now. This only

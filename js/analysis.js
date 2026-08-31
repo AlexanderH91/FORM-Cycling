@@ -1397,7 +1397,15 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      and never was; depth arriving all at once, before anyone has asked for it,
      is. Every measurement card on this screen already opens on a sentence and
      hides its working. The fix is the card that most needs to follow that
-     pattern and was the only one that did not. */
+     pattern and was the only one that did not.
+
+     AND THE BUTTON UNDER IT ANSWERS THE CUE. A card reading "Nothing to change
+     here" sat above a button saying "I made this change", because the button
+     was rendered for every fix whether or not one had been asked for. So each
+     fix declares what it actually wants next: `change: true` when it prescribes
+     moving something, which is the only case worth logging a date against, and
+     `again: true` when what it needs is another ride. A fix that wants neither
+     gets no button and the card simply ends. */
   let fix;
   if (pooled.settled && !sameSide && spread > kHi - kLo)
     fix = {
@@ -1408,6 +1416,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       title: "We can't call your saddle height yet",
       line: `We measured your knee on ${pooled.rides} rides and got a different answer nearly every time — ${pooled.lo.toFixed(0)}° at the lowest, ${pooled.hi.toFixed(0)}° at the highest. Nothing on your bike changed, so they cannot all be right.`,
       cue: "Film one more from the side, with the whole bike in the box on screen and your seat on the line.",
+      again: true,
       why: `We would rather tell you that than pick one and sound confident. Riders sit between ${kLo}° and ${kHi}° here, and the gap between your own readings is wider than that whole range — so whichever one we picked, we would have a good chance of sending you the wrong way. Saddle height is the setting everything else in a fit is built on, which is why we would rather hold it than guess. Framing it the same way is what makes two rides comparable; the guide on the capture screen is there to make that easy.`,
     };
   else if (pooled.settled && pooledVerdict === "borderline" && edgeSide)
@@ -1417,6 +1426,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       cue: tooStraight
         ? "Two to three millimetres down would bring you inside — about a third of the width of the marks on a seatpost."
         : "Two to three millimetres up would bring you inside — about a third of the width of the marks on a seatpost.",
+      change: true,
       why: `Every one of those rides landed between ${pooled.lo.toFixed(0)}° and ${pooled.hi.toFixed(0)}°. That agreement across separate days and separate camera setups is the evidence; no single ride could give it. This close to the edge the difference is small and comfort should decide it. ${consequence} If nothing aches and the power feels good where you are, this is a fine place to ride.`,
     };
   else if (pooled.settled && pooledVerdict === "ok")
@@ -1431,6 +1441,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       title: tooStraight ? "Saddle looks high" : "Saddle looks low",
       line: `Your knee ${tooStraight ? "only bends" : "stays bent"} ${pv}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""}, where riders sit between ${kLo}° and ${kHi}°.`,
       cue: saddleMove("5 mm"),
+      change: true,
       why: `That gap is wider than the amount we could be out by (${pooled.u.toFixed(1)}°), so it is a real difference rather than a noisy read. ${consequence}`,
     };
   else if (pooledVerdict === "borderline")
@@ -1438,6 +1449,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       title: "Too close to call — one more read",
       line: `Your knee bends ${k}° at the bottom and riders sit between ${kLo}° and ${kHi}° — too close for us to call it either way.`,
       cue: `Ride ${pooled.rides} of ${SETTLE_RIDES}. Film again in the same spot.`,
+      again: true,
       why: `Over ${kneeBDC.n} strokes we can place you to about ${kU.toFixed(1)}° either way, which still reaches across the edge. Moving a saddle on a reading this close is guesswork, and guesswork on saddle height is how people end up chasing knee pain around the bike. We add your rides together and how closely they agree is what settles it — one more costs ten minutes.`,
     };
   else if (toeBDC && toeVerdict === "high" && toeBDC.value > BANDS.footToeDown6[1] + 3)
@@ -1445,6 +1457,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       title: "Very toe-down at the bottom",
       line: `Your foot points ${toeBDC.value.toFixed(0)}° down at the bottom of the stroke, where most riders are between ${BANDS.footToeDown6[0]}° and ${BANDS.footToeDown6[1]}°.`,
       cue: "Think about dropping your heel through the bottom of the stroke — like scraping mud off the shoe.",
+      change: true,      // a change to how you ride is still worth a date
       why: "Pointing the toe hard at the bottom does the work with the calf instead of the big muscles above the knee, and the calf is a much smaller engine that tires sooner. It also reads as a saddle slightly too high, so it is worth settling alongside the number above.",
     };
   else
@@ -1594,6 +1607,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       title: "Square the camera up first",
       line: capture.reason,
       cue: "Stand the phone level with the saddle and square to the side of the bike, then film again.",
+      again: true,
       why: "Angles read off an angled view are stretched, which is why we are not saying whether the numbers below are right or wrong. Filmed square, the same clip is worth acting on.",
     };
   }
