@@ -406,6 +406,10 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .mcard.open .mtoggle i{transform:rotate(180deg)}
 .mbody{padding:0 16px 16px}
 
+/* The one card on home that asks for something. Marked, because a screen where
+   every card looks the same is a screen with no next step on it. */
+.card.next{border-left:3px solid var(--gold)}
+
 /* The fix card borrows the accordion without being a card of its own: it is
    already inside .card padding, so the toggle and its panel sit flush. */
 .fixmore{padding:2px 0 0}

@@ -124,5 +124,54 @@ T('so a rider who has earned an answer gets one',
   eras.verdict.word === 'Good' && /doing its job/.test(eras.verdict.head),
   `"${eras.verdict.head}" — the same rides pooled together read "${eras.wouldHaveBeen.word}"`);
 
+/* A settled saddle is not the end of the app. "Your saddle height is doing its
+   job, nothing to change" was the whole of the home screen for a rider who had
+   got there — true, useful once, and no reason to ever open it again. */
+const next = await page.evaluate(async () => {
+  const { standing, nextStep } = await import('/js/analysis.js');
+  const ride = (v) => ({ value: v, sd: 3, n: 14, era: '3d' });
+  const settled = standing([34, 35, 34, 36, 35, 34].map(ride));
+  const unsettled = standing([30, 31].map(ride));
+  return {
+    noFront:  nextStep(settled, { front: false, rear: false }),
+    noRear:   nextStep(settled, { front: true, rear: false }),
+    allRead:  nextStep(settled, { front: true, rear: true }),
+    unsettled: nextStep(unsettled, { front: true, rear: true }),
+    nothing:  nextStep(null, {}),
+  };
+});
+
+T('a rider whose saddle is settled is sent to the angle we have never read',
+  /knees track straight/.test(next.noFront.head) && next.noFront.to === '#/analyze',
+  `"${next.noFront.head}"`);
+T('then to the other one', /sit level/.test(next.noRear.head), `"${next.noRear.head}"`);
+T('and once all three read clean, to whether it made a difference',
+  /made you faster/.test(next.allRead.head) && next.allRead.to === '#/connect',
+  `"${next.allRead.head}" — the question stops being what to change`);
+T('every step hands over one thing to do',
+  [next.noFront, next.noRear, next.allRead].every((s) => s.act && s.to && s.line.length > 120),
+  'a headline with no button is a fact, not a next step');
+T('a saddle still being settled is not asked for two things at once',
+  next.unsettled === null, 'the card above is already asking for a ride');
+T('and a rider with no rides is left to the empty state', next.nothing === null);
+
+// home has to render it, and mark it as the thing to act on
+const wired = await page.evaluate(async () => {
+  const src = await (await fetch('/js/pages/home.js')).text();
+  const css = await (await fetch('/css/app.css')).text();
+  return {
+    renders: /nextStep\(standing, \{ front: everRead\("front"\), rear: everRead\("rear"\) \}\)/.test(src)
+      && /class="glass card next"/.test(src),
+    /* Read, not filmed. He has filmed the front and the rear several times and
+       both came back refused; nothing on this screen ever said so. */
+    countsReadsNotTakes: /!s\.report\[key\]\.gate/.test(src),
+    marked: /\.card\.next\{/.test(css),
+  };
+});
+T('home shows the next step and marks it as the one to act on',
+  wired.renders && wired.marked);
+T('and counts angles we have actually read, not ones that were filmed',
+  wired.countsReadsNotTakes, 'both extra views have been filmed and both were refused');
+
 await b.close();
 finish();

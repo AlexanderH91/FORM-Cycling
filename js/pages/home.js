@@ -1,6 +1,6 @@
 import { supa } from "../supa.js";
 
-import { pool, comparable, kneeReadOf, standing as standing_ } from "../analysis.js";
+import { pool, comparable, kneeReadOf, standing as standing_, nextStep } from "../analysis.js";
 import { appbar } from "../ui.js";
 
 export async function renderHome(view, user) {
@@ -26,6 +26,13 @@ export async function renderHome(view, user) {
   const across = pool(comparable(reads));
   const standing = standing_(reads);
 
+  /* Which angles have ever given us a reading — not which were filmed. He has
+     filmed all three several times; the front and the rear have both come back
+     refused, and nothing on this screen ever said so or asked again. */
+  const everRead = (key) => (sessions ?? []).some((s) =>
+    key === "side" ? s.report?.kneeBendBDC : s.report?.[key] && !s.report[key].gate);
+  const next = nextStep(standing, { front: everRead("front"), rear: everRead("rear") });
+
   view.innerHTML = `
   ${appbar(new Date().toLocaleDateString(undefined,{day:"numeric",month:"short"}))}
   ${latest ? `
@@ -35,6 +42,13 @@ export async function renderHome(view, user) {
       <p><strong>${standing?.head ?? "Nothing measured yet"}</strong></p>
       <p>${standing?.line ?? ""}</p>
     </div>
+    ${next ? `
+    <div class="glass card next">
+      <div class="row"><h3>Next</h3></div>
+      <p><strong>${next.head}</strong></p>
+      <p>${next.line}</p>
+      <a class="btn secondary" href="${next.to}" style="margin-top:12px">${next.act}</a>
+    </div>` : ""}
     <div class="glass card">
       <div class="row"><h3>Knee bend at the bottom</h3>
         <div class="val">${across ? across.value.toFixed(0) : "–"}° <em>${standing?.word ?? "–"}</em></div></div>

@@ -912,6 +912,39 @@ export function standing(reads) {
         line: `Your knee is still bent ${deg}° at the bottom, where riders sit between ${lo}° and ${hi}°. You never get through the strongest part of the push, and the front of the knee takes what is left. Raise the saddle 5 mm, ride a minute, and film it again.` };
 }
 
+/* WHAT TO DO NEXT — the reason to open this again.
+
+   The home screen ended at "your saddle height is doing its job, nothing to
+   change". True, useful once, and a dead end: a rider who has settled the one
+   setting the app talks about has been told, politely, that they are finished
+   with it. Saddle height is not the product. It is the first of several things
+   the app can see, and the only one it was ever pointing at.
+
+   So once it is settled, say what is still unanswered and hand over the one
+   action that answers it. Ranked by how much is behind the door: an angle
+   never read at all outranks a number that could be sharper, and both outrank
+   "come back in a month". `null` means the card above already IS the next
+   step — an unsettled saddle is asking for a ride, and asking twice on one
+   screen is nagging. */
+export function nextStep(stand, views = {}) {
+  if (!stand) return null;                     // no rides yet: the empty state has its own words
+  if (stand.word !== "Good" && stand.word !== "Just inside") return null;
+
+  if (!views.front)
+    return { head: "Find out whether your knees track straight",
+      line: "Filmed from the side, a knee sliding in or out of line is invisible — the leg just looks like it is going up and down. From the front it is obvious, and it is the movement behind most aches on the inside or the outside of the knee. Cleat position is usually what moves it.",
+      act: "Film the front view", to: "#/analyze" };
+
+  if (!views.rear)
+    return { head: "Find out whether you sit level",
+      line: "From behind you can see whether your hips stay level or roll from side to side chasing the pedals. Every bit of that roll is effort moving you about instead of moving the bike, and it is the check that either backs up your saddle height or argues with it.",
+      act: "Film from behind", to: "#/analyze" };
+
+  return { head: "Find out whether it made you faster",
+    line: "Your position is settled and all three angles read clean, so the question stops being what to change and starts being what the changes did. Pair your rides and we will put the same effort before and after a change side by side — power for the heart rate it cost, which is the part you feel on a long day.",
+    act: "Connect your rides", to: "#/connect" };
+}
+
 /* FRONT VIEW — the clip-level pass: sample the frames, settle the linkage,
    then report knee travel and left/right evenness from what survived. */
 export async function analyzeFrontClip(blob, trim, onProgress) {
