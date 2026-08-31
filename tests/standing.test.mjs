@@ -55,13 +55,15 @@ T('every line says what your leg is actually doing', noBody.length === 0,
 T('and what to do about it, even if that is nothing', noAction.length === 0,
   noAction.map(([k]) => k).join(', ') || 'each one ends somewhere actionable');
 
-/* The one that started this: scattered rides are not a position. */
+/* Scattered rides are still not a position — but the headline opens on the
+   rider, not on our difficulty. "We can't call your saddle height yet" is an
+   apology, and it was the first thing anyone read when they opened the app. */
 T('rides that disagree with each other are not called a position',
-  /cannot all be right/.test(r.scattered.line) && r.scattered.word === 'Not settled',
+  r.scattered.word === 'Not settled' && /something in the filming did/.test(r.scattered.line),
   `"${r.scattered.head}"`);
-T('and home says exactly what the report says about them',
-  /different answer nearly every time/.test(r.scattered.line),
-  'one wording, one source, no arguing with itself two taps away');
+T('and the headline is about the rider, not about our difficulty',
+  /Your knee bends/.test(r.scattered.head) && !/^We /.test(r.scattered.head),
+  `"${r.scattered.head}" — three lines of apology used to come first`);
 
 T('a rider in the middle is told to leave it alone',
   /Nothing to change/.test(r.middle.line) && r.middle.word === 'Good', `"${r.middle.head}"`);
@@ -76,7 +78,8 @@ T('a leg straightening far is a saddle too high',
 T('a knee still bent is a saddle too low',
   /too low/.test(r.low.head) && /Raise the saddle/.test(r.low.line), `"${r.low.head}"`);
 T('two rides on the edge is not yet an answer',
-  /One more ride/.test(r.twoRides.head), `"${r.twoRides.head}"`);
+  r.twoRides.word === 'Not settled' && /not quite enough/.test(r.twoRides.line),
+  `"${r.twoRides.head}"`);
 T('but two rides in the clear does not ask for a third',
   r.twoClear.word === 'Good', `"${r.twoClear.head}" — "change nothing" needs no more evidence`);
 T('and no rides is not an answer at all', r.nothing === null);
@@ -94,6 +97,32 @@ T('home renders the shared answer rather than working out its own',
   wiring.usesTheSharedOne && wiring.decidesNothing);
 T('and prints it once, not once per card', wiring.saysItOnce,
   'both cards used to print the same sentence');
+
+/* Readings taken before we changed how we measure are history, not evidence.
+   A rider opened the app to "17 rides, 27° at the lowest, 39° at the highest";
+   thirteen of those seventeen predate measuring the angle in three dimensions,
+   and the four since sat within 1.4° of each other. That spread was a record
+   of our own changes, shown to a rider as instability in their riding. */
+const eras = await page.evaluate(async () => {
+  const { standing, comparable } = await import('/js/analysis.js');
+  const old = (v) => ({ value: v, sd: 3, n: 14, era: 'flat' });
+  const now = (v) => ({ value: v, sd: 3, n: 14, era: '3d' });
+  const mixed = [old(27), old(39), old(28), old(38), old(30),
+                 now(33.4), now(32.8), now(34.1), now(34.2)];
+  return {
+    keptOnlyCurrent: comparable(mixed).length === 4,
+    allOldStillCounts: comparable([old(31), old(33)]).length === 2,
+    verdict: standing(mixed),
+    wouldHaveBeen: standing(mixed.map((r) => ({ ...r, era: 'flat' }))),
+  };
+});
+T('rides measured the old way are left out of the average',
+  eras.keptOnlyCurrent, 'four comparable rides out of nine');
+T('unless there are no current ones, in which case they still stand',
+  eras.allOldStillCounts, 'a rider who has not filmed since is not left with nothing');
+T('so a rider who has earned an answer gets one',
+  eras.verdict.word === 'Good' && /doing its job/.test(eras.verdict.head),
+  `"${eras.verdict.head}" — the same rides pooled together read "${eras.wouldHaveBeen.word}"`);
 
 await b.close();
 finish();

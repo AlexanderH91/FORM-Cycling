@@ -1,6 +1,6 @@
 import { supa } from "../supa.js";
 
-import { pool, kneeReadOf, standing as standing_ } from "../analysis.js";
+import { pool, comparable, kneeReadOf, standing as standing_ } from "../analysis.js";
 import { appbar } from "../ui.js";
 
 export async function renderHome(view, user) {
@@ -23,7 +23,7 @@ export async function renderHome(view, user) {
      different — telling a rider "that is where you ride, not a shaky reading"
      while the report two taps away said the readings could not all be right. */
   const reads = (sessions ?? []).map((s) => kneeReadOf(s.report)).filter(Boolean);
-  const across = pool(reads);
+  const across = pool(comparable(reads));
   const standing = standing_(reads);
 
   view.innerHTML = `

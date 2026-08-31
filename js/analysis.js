@@ -287,7 +287,30 @@ export function kneeReadOf(report) {
   const k = report?.kneeBendBDC;
   const value = k?.value ?? k?.mean;
   if (!Number.isFinite(value)) return null;
-  return { value, sd: k.sd ?? 0, n: k.strokes ?? 1 };
+  /* How this one was measured, so it is never averaged with readings taken a
+     different way. An angle read off the flat picture and an angle
+     reconstructed in three dimensions are not the same quantity. */
+  return { value, sd: k.sd ?? 0, n: k.strokes ?? 1,
+           era: report?.howRead ? ERA : "flat" };
+}
+
+/* WHICH RIDES CAN BE COMPARED WITH EACH OTHER.
+
+   A rider opened the app to "we measured your knee on 17 rides and got a
+   different answer nearly every time — 27° at the lowest, 39° at the highest".
+   Thirteen of those seventeen were measured before we started reconstructing
+   the angle in three dimensions. The four taken since sit at 33.4, 32.8, 34.1
+   and 34.2 — a spread of 1.4°, against 3.6° for the same four read the old way.
+
+   So that 27-to-39 spread was a record of our own changes presented to a rider
+   as instability in their riding, and it was blocking an answer they had
+   already earned. When the way we measure changes, everything before it is
+   history: keep it on the chart, keep it out of the average. */
+const ERA = "3d";
+export function comparable(reads) {
+  const list = (reads ?? []).filter(Boolean);
+  const now = list.filter((r) => r.era === ERA);
+  return now.length ? now : list;      // nothing current yet: the old set stands
 }
 
 export function pool(reads) {
@@ -835,7 +858,7 @@ export function settleFrontLegs(rows, fps = FRONT_FPS) {
    what their leg is doing, where the work is landing, and whether to touch
    anything. Every line below says those three things and stops. */
 export function standing(reads) {
-  const across = pool(reads);
+  const across = pool(comparable(reads));
   if (!across) return null;
   const [lo, hi] = BANDS.kneeBendBDC;
   const v = across.value, n = across.rides;
@@ -847,10 +870,15 @@ export function standing(reads) {
 
   /* Rides that disagree with each other by more than the whole range are not a
      position, whatever their average comes out as. */
+  /* This is the first thing anyone reads when they open the app, so it opens
+     with the rider, not with us. "We can't call your saddle height yet" is an
+     apology as a welcome screen: three lines about our own difficulty before a
+     single word about them. Lead with what their leg is doing, which we do
+     know, and put what is missing after it. */
   if (across.settled && !sameSide && across.hi - across.lo > hi - lo)
     return { word: "Not settled",
-      head: "We can't call your saddle height yet",
-      line: `We measured your knee on ${rides} and got a different answer nearly every time — ${across.lo.toFixed(0)}° at the lowest, ${across.hi.toFixed(0)}° at the highest. Nothing on your bike changed, so they cannot all be right. Film one more from the side and we should be able to tell you.` };
+      head: `Your knee bends around ${deg}° at the bottom`,
+      line: `Across ${rides} it has come out as low as ${across.lo.toFixed(0)}° and as high as ${across.hi.toFixed(0)}°, and nothing on your bike changed in between — so something in the filming did. Film one more from the side with the whole bike in the box on screen, and we can tell you whether that leg wants more room or less.` };
 
   if (verdict === "ok")
     return { word: "Good",
@@ -868,8 +896,8 @@ export function standing(reads) {
 
   if (verdict === "borderline")
     return { word: "Not settled",
-      head: "One more ride and we can call it",
-      line: `Your rides do not agree closely enough yet — ${n} of ${SETTLE_RIDES}. Film one more from the same spot and we can tell you whether your leg is straightening too far at the bottom of the stroke, not far enough, or is fine where it is.` };
+      head: `Your knee bends around ${deg}° at the bottom`,
+      line: `That sits right on the edge of where riders sit, and ${n} ride${n > 1 ? "s" : ""} is not quite enough to say which side of it you are on. Film one more from the same spot and we can tell you whether your leg is straightening too far at the bottom of the stroke, not far enough, or is fine exactly where it is.` };
 
   return straighter
     ? { word: "Worth a change",
@@ -1354,7 +1382,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   /* Your earlier rides are evidence about the same rider, so they are used as
      such. `history` holds the knee read from each previous session; pooling
      them is what turns a run of close calls into an answer. */
-  const pooled = pool([{ value: kneeBDC.value, sd: kneeBDC.sd, n: kneeBDC.n }, ...history]);
+  /* This ride, plus the earlier ones measured the same way. Home and the report
+     were reading different sets and reaching different conclusions on the same
+     day — one saying "saddle height holds up", the other "we can't call it". */
+  const pooled = pool(comparable([{ value: kneeBDC.value, sd: kneeBDC.sd, n: kneeBDC.n, era: ERA }, ...history]));
   const pooledVerdict = verdictWith(pooled.value, pooled.u, BANDS.kneeBendBDC);
   const pv = pooled.value.toFixed(0);
   const edgeSide = pooled.value < kLo ? "below" : pooled.value > kHi ? "above" : null;
@@ -1641,7 +1672,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
        "is the spread the camera or is it us?" is a question that needs data
        across rides and had none. */
     howRead: {
-      space: bdcM.every((r) => r.fromWorld) ? "3d" : bdcM.some((r) => r.fromWorld) ? "mixed" : "flat",
+      space: bdcM.every((i) => rows[i].fromWorld) ? "3d"
+        : bdcM.some((i) => rows[i].fromWorld) ? "mixed" : "flat",
       flat: kneeFlatBDC ? +kneeFlatBDC.value.toFixed(1) : null,
       flatSd: kneeFlatBDC ? +kneeFlatBDC.sd.toFixed(1) : null,
       gap: kneeFlatBDC ? +(kneeBDC.value - kneeFlatBDC.value).toFixed(1) : null,

@@ -36,7 +36,8 @@ const r = await page.evaluate(async () => {
     fiveLow: poolV([24, 23, 25, 24, 23].map((x) => ride(x))),
     usesMedian: /value: median\(vals\)/.test(src),
     filtersByConfidence: /rows\[i\]\.conf >= CAPTURE\.minJointVisibility/.test(src),
-    poolsHistory: /pool\(\[\{ value: kneeBDC\.value/.test(src),
+    // ...and only the earlier rides measured the same way as this one
+    poolsHistory: /pool\(comparable\(\[\{ value: kneeBDC\.value/.test(src),
   };
 });
 
