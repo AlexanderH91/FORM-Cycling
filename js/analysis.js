@@ -764,8 +764,27 @@ const LEGS = ["l", "r"];
    them cannot. That is the case the geometry exists for. */
 export function frontLegs(p, sq) {
   const vis = (i) => (p[i].visibility ?? 1) >= CAPTURE.minJointVisibility;
+  /* THE ENDS HAVE TO BE ON THE BODY, not just visible and the right way up.
+     This is the hole the linkage work left. bestLeg() questions the knee and
+     trusts the hip and the ankle absolutely — so when the model puts a "hip"
+     up on a shoulder and an "ankle" down on a hand, the two circles still
+     intersect somewhere, and it draws a confident, geometrically perfect leg
+     across a rider's arm. Reconstruction makes a bad read look MORE certain,
+     not less, which is exactly the wrong way round.
+
+     A hip is below both shoulders. That is cheap, it is always true of someone
+     sitting on a bike, and it is the check that would have caught it. */
+  const belowShoulders = Math.max(p[11]?.y ?? -1, p[12]?.y ?? -1);
   const leg = (h, k, a) => {
-    const ends = vis(h) && vis(a) && p[a].y > p[h].y;
+    /* "Below the shoulders" is not enough on its own — a hip one per cent of
+       the frame under a shoulder passes that and is still a shoulder. Measure
+       it against the body's own height in frame: from the shoulders down to
+       this ankle, a hip sits somewhere near the middle, never in the top
+       sixth. Scale-free, so it holds whether the rider fills the frame or
+       stands six metres back. */
+    const body = p[a].y - belowShoulders;
+    const ends = vis(h) && vis(a) && p[a].y > p[h].y
+      && body > 0 && (p[h].y - belowShoulders) > 0.15 * body;
     return {
       hip: sq(p[h]), knee: sq(p[k]), ankle: sq(p[a]), ends,
       clean: ends && vis(k) && p[k].y > p[h].y && p[a].y > p[k].y,

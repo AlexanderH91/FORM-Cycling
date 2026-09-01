@@ -115,5 +115,40 @@ T('a lone leg on a portrait clip is credited to the right side of the body',
   r.loneLeft && !r.loneRight,
   'mid-frame is half the squared width, not a flat 0.5');
 
+/* The hole the linkage left. bestLeg() questions the knee and trusts the hip
+   and the ankle absolutely — so a "hip" on a shoulder and an "ankle" on a hand
+   still give two circles that intersect, and the app draws a confident,
+   geometrically perfect leg across the rider's arm. A reconstruction makes a
+   bad read look MORE certain, which is the wrong way round. */
+const onTheBody = await page.evaluate(async () => {
+  const { frontLegs, squareUp } = await import('/js/analysis.js');
+  const sq = squareUp(1080 / 1920);
+  const marks = (hipY, kneeY, ankleY, shoulderY = 0.30) => {
+    const p = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0.99 }));
+    p[11] = { x: 0.42, y: shoulderY, visibility: 0.99 };
+    p[12] = { x: 0.58, y: shoulderY, visibility: 0.99 };
+    p[23] = { x: 0.46, y: hipY, visibility: 0.99 };
+    p[25] = { x: 0.46, y: kneeY, visibility: 0.99 };
+    p[27] = { x: 0.46, y: ankleY, visibility: 0.99 };
+    return p;
+  };
+  const leg = (...a) => frontLegs(marks(...a), sq).l;
+  return {
+    real:      leg(0.55, 0.72, 0.90),
+    onTheArm:  leg(0.31, 0.34, 0.47),          // "hip" at the shoulder, "ankle" at the hand
+    hipAtShoulder: leg(0.30, 0.50, 0.70),      // level with the shoulders exactly
+    farBack:   leg(0.62, 0.68, 0.74, 0.55),    // a small rider six metres away
+  };
+});
+T('a real leg still passes', onTheBody.real.ends && onTheBody.real.clean);
+T('a "leg" drawn across the arm is refused before the geometry ever sees it',
+  !onTheBody.onTheArm.ends && !onTheBody.onTheArm.clean,
+  'ends false means bestLeg is never asked, so nothing is reconstructed there');
+T('and a hip cannot sit level with the shoulders either',
+  !onTheBody.hipAtShoulder.ends, 'a hip is below both of them, always, on a bike');
+T('while a rider standing well back still reads as a rider',
+  onTheBody.farBack.ends && onTheBody.farBack.clean,
+  'the check is against the body\'s own height in frame, not a fixed distance');
+
 await b.close();
 finish();

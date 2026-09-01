@@ -131,6 +131,12 @@ const anatomy = await page.evaluate(async () => {
   const S = await import('/js/analysis.js');
   const marks = (hipY, kneeY, ankleY) => {
     const p = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0.99 }));
+    /* Shoulders where a rider's shoulders are. The default filled every
+       landmark with 0.5, which put them level with the chest — and frontLegs
+       now measures the hip against them, so a fixture with no shoulders is a
+       fixture of nobody. */
+    p[11] = { x: 0.42, y: 0.30, visibility: 0.99 };
+    p[12] = { x: 0.58, y: 0.30, visibility: 0.99 };
     p[23] = { x: 0.5, y: hipY, visibility: 0.99 };
     p[25] = { x: 0.5, y: kneeY, visibility: 0.99 };
     p[27] = { x: 0.5, y: ankleY, visibility: 0.99 };
