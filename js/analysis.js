@@ -170,18 +170,108 @@ export function threeOClock(rows, fps) {
   return { forward, three };
 }
 
+/* WHERE THE PEDAL SPINDLE ACTUALLY IS, measured rather than assumed.
+ *
+ * Everything else in this app is read off the rider. The axle was the one
+ * exception: a constant saying it sits 28% of the way from the toe landmark
+ * back towards the heel, because "cleats are normally set under the ball of the
+ * foot". That is a population average standing in for a measurement, and the
+ * fore/aft number is built entirely on it.
+ *
+ * It does not need to be. Through a pedal stroke the foot both revolves around
+ * the bottom bracket AND rocks about the spindle, so every point on the foot
+ * traces a circle plus a wobble — except the spindle itself, which traces the
+ * cleanest circle there is. Walk a candidate point along the toe-to-heel line,
+ * fit a circle to the path each one traces, and the spindle is the one that
+ * fits best.
+ *
+ * The fitted circle then gives something else for free. Its radius is the crank
+ * length, and cranks are 170 mm on almost every bike ever sold. So the ratio
+ * "knee offset ÷ crank radius" turns into centimetres with no rider height, no
+ * population thigh proportion, and — because both are measured in the same
+ * frame — no dependence on scale or on how square the camera was. */
+function fitCircle(pts) {
+  const n = pts.length;
+  if (n < 12) return null;
+  let Sx = 0, Sy = 0, Sxx = 0, Syy = 0, Sxy = 0, Sz = 0, Sxz = 0, Syz = 0;
+  for (const { x, y } of pts) {
+    const z = x * x + y * y;
+    Sx += x; Sy += y; Sxx += x * x; Syy += y * y; Sxy += x * y;
+    Sz += z; Sxz += x * z; Syz += y * z;
+  }
+  // Kåsa: least squares on x² + y² = 2ax + 2by + c, with c = r² − a² − b².
+  const M = [[2 * Sxx, 2 * Sxy, Sx], [2 * Sxy, 2 * Syy, Sy], [2 * Sx, 2 * Sy, n]];
+  const v = [Sxz, Syz, Sz];
+  const det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1])
+            - M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0])
+            + M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-14) return null;
+  const solve = (col) => {
+    const A = M.map((row, i) => row.map((q, j) => (j === col ? v[i] : q)));
+    return (A[0][0] * (A[1][1] * A[2][2] - A[1][2] * A[2][1])
+          - A[0][1] * (A[1][0] * A[2][2] - A[1][2] * A[2][0])
+          + A[0][2] * (A[1][0] * A[2][1] - A[1][1] * A[2][0])) / det;
+  };
+  const cx = solve(0), cy = solve(1), c = solve(2);
+  const rr = c + cx * cx + cy * cy;
+  if (!(rr > 0)) return null;
+  const r = Math.sqrt(rr);
+  /* A path has to have gone somewhere. A foot that barely moved fits a circle
+     of any radius you like with no error at all, which is a perfect score for
+     having measured nothing — so require the points to cover a real arc: a
+     whole revolution spans about 2.8 radii corner to corner, and anything
+     under about half a radius never went round. */
+  const xs = pts.map((q) => q.x), ys = pts.map((q) => q.y);
+  const spread = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+  if (!(spread > 1.2 * r)) return null;
+  // How far off a circle the path actually is, as a share of its own radius.
+  const off = pts.map(({ x, y }) => Math.abs(Math.hypot(x - cx, y - cy) - r));
+  return { cx, cy, r, residual: median(off) / r, n };
+}
+
+export function pedalAxle(rows) {
+  const usable = rows.filter((r) => r.fy && Number.isFinite(r.fy.toe) && Number.isFinite(r.fy.heel)
+    && r.conf >= CAPTURE.minJointVisibility);
+  if (usable.length < 40) return null;
+
+  let best = null;
+  for (let u = 0; u <= 0.7001; u += 0.02) {
+    const pts = usable.map((r) => ({
+      x: r.x.toe + u * (r.x.heel - r.x.toe),
+      y: r.fy.toe + u * (r.fy.heel - r.fy.toe),
+    }));
+    const fit = fitCircle(pts);
+    if (fit && (!best || fit.residual < best.residual)) best = { ...fit, along: +u.toFixed(2) };
+  }
+  /* A foot that never traced a circle worth the name — the rider stopped
+     pedalling, or the model lost the foot. Better to fall back to the
+     population figure than to build centimetres on a bad fit. */
+  if (!best || best.residual > 0.12) return null;
+  return best;
+}
+
 export function kneeOverAxle(rows, fps) {
     const { forward, three } = threeOClock(rows, fps);
     if (!forward || three.length < 3) return null;
 
+    /* The spindle, measured from the path the foot traced; the population
+       figure only where the clip could not give one. */
+    const spindle = pedalAxle(rows);
+    const along = spindle ? spindle.along : AXLE_ALONG_FOOT;
+
     const offs = three.map((i) => {
       const j = rows[i].x;
-      const axle = j.toe + AXLE_ALONG_FOOT * (j.heel - j.toe);
+      const axle = j.toe + along * (j.heel - j.toe);
       return forward * (j.knee - axle);        // + = knee ahead of the axle
     });
     const femur = median(three.map((i) => rows[i].femur));
     if (!(femur > 1e-3)) return null;
     const mid = median(offs);
+    /* Centimetres from the crank, when we measured one. The circle the foot
+       traced IS the crank, so offset ÷ radius × 172.5 mm is a real distance —
+       no rider height, no population thigh, and no dependence on scale or on
+       how square the camera was, because both numbers come off the same frame. */
+    const cm = spindle ? (mid / spindle.r) * 17.25 : null;
     /* No rider sits this far off. Past a third of a thigh it is the model
        having put the toe or the heel somewhere that is not the foot, and a
        number built on that should not reach a card at all. */
@@ -189,6 +279,10 @@ export function kneeOverAxle(rows, fps) {
     return {
       // in thigh-lengths, which needs no assumption about the rider at all
       ofFemur: mid / femur,
+      fromCrank: cm != null && Math.abs(cm) < 12 ? +cm.toFixed(1) : null,
+      spindle: spindle
+        ? { along: spindle.along, crank: +spindle.r.toFixed(4), fit: +spindle.residual.toFixed(3) }
+        : null,
       sd: sd(offs) / femur,
       n: offs.length,
       /* Strokes ranked by how close each is to the reported figure, so the
@@ -201,9 +295,41 @@ export function kneeOverAxle(rows, fps) {
   }
 
 export function dominantSide(frames) {
-  const lWins = frames.filter((f) => sideVis(f.L) >= sideVis(f.R)).length;
-  const side = lWins * 2 >= frames.length ? "L" : "R";
-  return { side, flipped: side === "L" ? frames.length - lWins : lWins };
+  /* WHICH LEG IS NEARER THE CAMERA — not which one the model felt surest about.
+     Visibility was the wrong signal. The model reports a confident-looking
+     score for a leg it is inferring behind the frame, so on a side view the two
+     scores come out close, and the tie-break then decided it: `>=` favoured L,
+     and so did the `lWins * 2 >= frames.length` comparison. A near-tie always
+     went the same way regardless of which leg the camera could actually see —
+     and the report drew, and measured, the hidden one.
+
+     The landmarks carry depth: z is distance from the camera with the hips as
+     the origin, so the nearer leg simply has the smaller z. That is a physical
+     answer rather than a proxy for one. Where the two legs sit at genuinely
+     the same depth — filmed from the front, or a clip too poor to separate
+     them — it falls back to visibility, which is the best that is left. */
+  const depth = (key) => {
+    const zs = frames
+      .map((f) => mean([f[key].hip, f[key].knee, f[key].ankle].map((q) => q.z ?? NaN)))
+      .filter(Number.isFinite);
+    return zs.length >= 5 ? median(zs) : null;
+  };
+  const zL = depth("L"), zR = depth("R");
+  const seen = (key) => mean(frames.map((f) => sideVis(f[key])));
+
+  const bySight = seen("L") >= seen("R") ? "L" : "R";
+  /* A hip's width in these units is around a tenth of the frame, so legs a
+     fiftieth apart are genuinely one in front of the other rather than noise. */
+  const separated = zL != null && zR != null && Math.abs(zL - zR) > 0.02;
+  const side = separated ? (zL < zR ? "L" : "R") : bySight;
+
+  /* How many frames would have gone the other way, on whichever signal
+     decided — a high count means the two legs were never really told apart. */
+  const otherWay = frames.filter((f) => separated
+    ? (mean([f.L.hip, f.L.knee, f.L.ankle].map((q) => q.z ?? 0))
+        < mean([f.R.hip, f.R.knee, f.R.ankle].map((q) => q.z ?? 0))) !== (side === "L")
+    : (sideVis(f.L) >= sideVis(f.R)) !== (side === "L")).length;
+  return { side, flipped: otherWay, by: separated ? "depth" : "visibility" };
 }
 
 /* Which leg to measure. THIS MUST BE DECIDED ONCE FOR THE WHOLE CLIP, not per
@@ -1204,7 +1330,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     onProgress(8 + (82 * i) / times.length);
   }
 
-  const { side, flipped } = dominantSide(seenFrames);
+  const { side, flipped, by: legPickedBy } = dominantSide(seenFrames);
 
   for (const f of seenFrames) {
       frames.seen++;
@@ -1241,6 +1367,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
         /* Square-corrected horizontals, kept for the fore/aft measurement.
            These never leave this function — only the derived numbers do. */
         x: { hip: hip.x, knee: knee.x, ankle: ankle.x, sho: sho.x, heel: heel.x, toe: toe.x },
+        // The foot's path is a circle, so it needs both axes in the same units.
+        fy: { heel: heel.y, toe: toe.y },
         femur: Math.hypot(knee.x - hip.x, knee.y - hip.y),
       });
   }
@@ -1273,6 +1401,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       toeDown: -deg(Math.atan2(heel.y - toe.y, Math.abs(toe.x - heel.x) + 1e-9)),
       ankleY: ankle.y,
       x: { hip: hip.x, knee: knee.x, ankle: ankle.x, sho: sho.x, heel: heel.x, toe: toe.x },
+      fy: { heel: heel.y, toe: toe.y },
       femur: Math.hypot(knee.x - hip.x, knee.y - hip.y),
       refined: true,
     };
@@ -1384,11 +1513,18 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     }
   }
   const foreaft = kneeOverAxle(rows, FPS);
-  if (foreaft && heightCm > 0) {
-    // One known length turns thigh-lengths into centimetres. The ratio is a
-    // population average, so this is approximate and says so on the card.
+  if (foreaft?.fromCrank != null) {
+    /* The crank the foot drew is the better ruler. It is measured in this
+       clip rather than assumed about this rider, and it needs no height. */
+    foreaft.cm = foreaft.fromCrank;
+    foreaft.sdCm = (foreaft.sd * foreaft.femurOverCrank) || null;
+    foreaft.ruler = "crank";
+  } else if (foreaft && heightCm > 0) {
+    // Fallback: one known length turns thigh-lengths into centimetres, through
+    // a population thigh proportion. Approximate, and the card says so.
     foreaft.cm = foreaft.ofFemur * FEMUR_OVER_HEIGHT * heightCm;
     foreaft.sdCm = foreaft.sd * FEMUR_OVER_HEIGHT * heightCm;
+    foreaft.ruler = "height";
   }
 
   onProgress(92, "Averaging across strokes…");
@@ -1749,6 +1885,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     foreAft: foreaft,
     leg: side === "L" ? "left" : "right",
     legFlips: flipped,
+    legPickedBy,
     // How many of the measured strokes were re-read with the accurate model.
     refined: { strokes: refined, top: refinedTop, model: POSE_MODEL.fine, sweep: POSE_MODEL.sweep,
                ...timing, totalMs: Math.round(performance.now() - analysisStart) },
@@ -1846,9 +1983,11 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
           : Math.abs(foreaft.ofFemur) < 0.07 ? "Over the pedal"
           : foreaft.ofFemur > 0 ? "Ahead of the pedal" : "Behind the pedal",
         note: `A plus sign means your knee is ahead of the pedal axle with the cranks level. Fitters usually start with the two roughly stacked and then move the saddle to suit the rider, so this is a starting point rather than something to hit — we do not score it. Measured over ${foreaft.n} strokes.${
-          foreaft.cm != null
-            ? " The centimetres are close rather than exact: they come from your height and from where the pedal axle normally sits under a foot, neither of which we can see in the video."
-            : " Add your height on the Me screen to see this in centimetres."}`,
+          foreaft.ruler === "crank"
+            ? " The centimetres come off your own pedals: your foot traces a circle as you ride, and that circle is the crank, which is 17 cm on almost every bike. Nothing here is assumed about your body."
+            : foreaft.cm != null
+              ? " The centimetres are close rather than exact: they come from your height and from where the pedal axle normally sits under a foot, neither of which we can see in the video."
+              : " Add your height on the Me screen to see this in centimetres."}`,
       }] : []),
       { name: "Cadence", value: cadence.toFixed(0) + " rpm",
         means: "Spinning faster shifts the effort off your legs and onto your heart and lungs; grinding does the opposite. Neither is wrong — but a long way from your natural cadence costs you late in a ride, when whichever system is carrying it starts to fade.", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Experienced riders mostly settle between ${BANDS.cadence[0]} and ${BANDS.cadence[1]} rpm. Below that you are pushing harder on each stroke; above it your heart and lungs are carrying more of it.` },

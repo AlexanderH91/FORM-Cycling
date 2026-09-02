@@ -55,7 +55,7 @@ const reads = await page.evaluate(async () => {
   const src = await (await fetch('/js/analysis.js')).text();
   const body = (from, to) => src.slice(src.indexOf(from), src.indexOf(to, src.indexOf(from)));
   return {
-    sideSweep: body('onProgress(8, "Reading your pedal strokes', 'const { side, flipped }'),
+    sideSweep: body('onProgress(8, "Reading your pedal strokes', 'const { side, flipped, by: legPickedBy }'),
     viewSweep: body('async function sampleFrames', 'rows.stat = stat;'),
     stillWaits: /await paintedFrame\(video\);/.test(body('async function still(', 'function bestStill')),
     refineWaits: /await paintedFrame\(video, 400\)/.test(body('async function detectAt', 'Re-read the strokes')),
