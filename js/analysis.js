@@ -1,7 +1,7 @@
 import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FINE_MODEL_TIMEOUT_MS, SUBFRAME, SANITY, FINE_OFFSET,
          FEMUR_OVER_HEIGHT, AXLE_ALONG_FOOT } from "./config.js";
 import { boneLengths, bestLeg, movedTooFar } from "./limbs.js";
-import { crankAngles, harmonic, cadenceFrom, framesAt, BDC, TDC, THREE } from "./cycle.js";
+import { crankAngles, harmonic, bootstrapAt, cadenceFrom, framesAt, BDC, TDC, THREE } from "./cycle.js";
 import { findWheel, settleWheel, calibrate, WHEEL_MM } from "./wheel.js";
 
 /* On-device side-view analysis.
@@ -410,7 +410,16 @@ export function strokeCurve(rows, fps, diag = {}) {
   };
   if (!fits.knee) { diag.why = "knee curve did not fit"; return null; }
   const revs = Math.max(1, Math.round(cad.revolutions));
-  const read = (fit, at) => (fit ? { value: fit.at(at), sd: fit.sdNear(at), n: revs, of: revs, curve: true } : null);
+  /* Each reported value carries `se`: the uncertainty of the curve at that
+     angle from resampling whole revolutions, which is what uncertainty() uses
+     when it is there. `sd` stays the per-stroke spread near the angle — that
+     is what the rider is told about their own consistency. */
+  const read = (fit, at, get) => {
+    if (!fit) return null;
+    const boot = get ? bootstrapAt(theta, rows.map((r) => (usable(r) ? get(r) : NaN)), at, { K: 3, B: 100 }) : null;
+    return { value: fit.at(at), sd: fit.sdNear(at), n: revs, of: revs, curve: true,
+             se: boot ? +boot.se.toFixed(3) : null, outliers: fit.outliers };
+  };
 
   const three = THREE(forward);
   let foreaft = null;
@@ -437,12 +446,14 @@ export function strokeCurve(rows, fps, diag = {}) {
 
   return {
     spindle, forward, cadence: cad.rpm, revolutions: +cad.revolutions.toFixed(1),
-    kneeBDC: read(fits.knee, BDC), kneeFlatBDC: read(fits.flat, BDC),
-    toeBDC: read(fits.toe, BDC), hipTDC: read(fits.hip, TDC),
+    kneeBDC: read(fits.knee, BDC, (r) => r.kneeBend), kneeFlatBDC: read(fits.flat, BDC),
+    toeBDC: read(fits.toe, BDC, (r) => r.toeDown), hipTDC: read(fits.hip, TDC, (r) => r.hip),
     foreaft,
     bdcFrames: framesAt(theta, BDC), tdcFrames: framesAt(theta, TDC),
     // how well each curve explains the frames — the model's per-frame noise
-    fit: { knee: +fits.knee.sd.toFixed(2), toe: fits.toe ? +fits.toe.sd.toFixed(2) : null, hip: fits.hip ? +fits.hip.sd.toFixed(2) : null },
+    fit: { knee: +fits.knee.sd.toFixed(2), toe: fits.toe ? +fits.toe.sd.toFixed(2) : null, hip: fits.hip ? +fits.hip.sd.toFixed(2) : null,
+           // frames the robust fit set aside as misreads, per curve
+           outliers: { knee: fits.knee.outliers, toe: fits.toe?.outliers ?? null, hip: fits.hip?.outliers ?? null } },
   };
 }
 
@@ -587,7 +598,11 @@ const SEEN = (pt) => (pt?.visibility ?? 1) > 0.5;
    centre, plus a floor for the errors that averaging cannot remove. */
 export function uncertainty(m) {
   const n = Math.max(1, m.n ?? m.strokes ?? 1);
-  return Math.sqrt((m.sd ?? 0) ** 2 / n + ANGLE_FLOOR_DEG ** 2);
+  /* A curve read carries its own standard error, measured by resampling whole
+     revolutions (see cycle.js). One-frame reads, and rides stored before that
+     existed, fall back to spread over root-n. */
+  const centre = Number.isFinite(m.se) ? m.se ** 2 : (m.sd ?? 0) ** 2 / n;
+  return Math.sqrt(centre + ANGLE_FLOOR_DEG ** 2);
 }
 
 export function verdictWith(value, u, [lo, hi]) {
@@ -618,7 +633,7 @@ export function kneeReadOf(report) {
   /* How this one was measured, so it is never averaged with readings taken a
      different way. An angle read off the flat picture and an angle
      reconstructed in three dimensions are not the same quantity. */
-  return { value, sd: k.sd ?? 0, n: k.strokes ?? 1,
+  return { value, sd: k.sd ?? 0, n: k.strokes ?? 1, se: Number.isFinite(k.se) ? k.se : undefined,
            era: report?.howRead ? ERA : "flat" };
 }
 
@@ -1799,7 +1814,13 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     knee: modelOffset(rows, bdc, "kneeBend"), toe: modelOffset(rows, bdc, "toeDown"),
     hip: modelOffset(rows, tdcIdx, "hip"),
   } : null;
-  const corrected = (read, off) => (read && off ? { ...read, value: read.value + off.value, corrected: off.value } : read);
+  /* The correction is itself an estimate, so its uncertainty joins the read's. */
+  const corrected = (read, off) => {
+    if (!read || !off) return read;
+    const base = Number.isFinite(read.se) ? read.se ** 2 : read.sd ** 2 / Math.max(1, read.n);
+    return { ...read, value: read.value + off.value, corrected: off.value,
+             se: +Math.sqrt(base + off.sd ** 2 / off.n).toFixed(3) };
+  };
   const kneeBDC = corrected(curve?.kneeBDC, fineOffset?.knee) ?? kneePk;
   const kneeFlatBDC = curve?.kneeFlatBDC ?? kneeFlatPk;
   const toeBDC = corrected(curve?.toeBDC, fineOffset?.toe) ?? toePk;
@@ -2224,6 +2245,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       gap: kneeFlatBDC ? +(kneeBDC.value - kneeFlatBDC.value).toFixed(1) : null,
     },
     kneeBendBDC: { value: +kneeBDC.value.toFixed(1), sd: +kneeBDC.sd.toFixed(1),
+                   se: kneeBDC.se ?? null, corrected: kneeBDC.corrected ?? null,
                    strokes: kneeBDC.n, of: kneeBDC.of, centre: "median",
                    mean: +kneeBDC.value.toFixed(1) },   // .mean kept for rows written before this
     kneeVerdict: pooledVerdict,

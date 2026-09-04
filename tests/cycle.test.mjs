@@ -36,9 +36,22 @@ const r = await page.evaluate(async () => {
     const cad = C.cadenceFrom(ang, times);
     const bdcFrames = C.framesAt(ang, C.BDC);
     const perStroke = bdcFrames.map((i) => knee[i]).sort((a, b) => a - b);
+    /* The same ride with the model's real failure mode added: one frame in
+       sixteen has the knee forty degrees out, as when it lands on the other
+       leg. A least-squares curve leans towards those; a robust one sets them
+       aside and should read as if they were never there. */
+    const dirty = knee.map((v) => (rnd() < 1 / 16 ? v + 40 : v));
+    const robust = C.harmonic(ang, dirty, 3);
+    const plain = C.harmonic(ang, dirty, 3, { robust: false });
+    const boot = C.bootstrapAt(ang, knee, C.BDC, { B: 100 });
     return {
       fitErr: fit.at(C.BDC) - truth(C.BDC),
       topErr: fit.at(C.TDC) - truth(C.TDC),
+      dirtyRobustErr: robust.at(C.BDC) - truth(C.BDC),
+      dirtyPlainErr: plain.at(C.BDC) - truth(C.BDC),
+      outliers: robust.outliers, injected: dirty.filter((v, i) => v !== knee[i]).length,
+      cleanOutliers: fit.outliers,
+      se: boot?.se ?? NaN, bootRevs: boot?.revolutions ?? 0,
       oneFrameErr: perStroke[perStroke.length >> 1] - truth(C.BDC),
       rpm: cad.rpm, revs: cad.revolutions, strokes: bdcFrames.length, fitSd: fit.sd,
       unwrapped: ang.every((a, i) => i === 0 || a >= ang[i - 1] - 1e-9),
@@ -46,8 +59,13 @@ const r = await page.evaluate(async () => {
   };
   const runs = Array.from({ length: 30 }, (_, i) => ride(7 + i * 101));
   const rms = (k) => Math.sqrt(runs.reduce((s, q) => s + q[k] ** 2, 0) / runs.length);
+  const meanOf = (k) => runs.reduce((s, q) => s + q[k], 0) / runs.length;
   return {
     rmsFit: rms('fitErr'), rmsTop: rms('topErr'), rmsOne: rms('oneFrameErr'),
+    rmsDirtyRobust: rms('dirtyRobustErr'), rmsDirtyPlain: rms('dirtyPlainErr'),
+    caught: meanOf('outliers'), injected: meanOf('injected'), cleanDropped: meanOf('cleanOutliers'),
+    // calibration: the bootstrap's claimed uncertainty against the error actually made
+    meanSe: meanOf('se'), bootRevs: runs[0].bootRevs,
     rpm: runs[0].rpm, revs: runs[0].revs, strokes: runs[0].strokes, fitSd: runs[0].fitSd,
     unwrapped: runs.every((q) => q.unwrapped),
     // theory: σ·√(params/frames)·~1.2 at the extreme, for 3° noise, 7 params, 210 frames
@@ -68,6 +86,18 @@ T('the residual reports the noise that was actually in the frames',
   r.fitSd > 2.4 && r.fitSd < 3.6, `${r.fitSd.toFixed(2)}° against 3° put in`);
 T('and it still knows which frames are the bottom of each stroke, for the picture',
   r.strokes >= 19 && r.strokes <= 22, `${r.strokes} strokes found in 14 s at 88 rpm`);
+T('a frame in sixteen forty degrees out barely moves the robust curve',
+  r.rmsDirtyRobust < 1.0, `RMS ${r.rmsDirtyRobust.toFixed(2)}° with misreads, ${r.rmsFit.toFixed(2)}° without`);
+T('where a plain least-squares fit is pulled towards them',
+  r.rmsDirtyPlain > r.rmsDirtyRobust * 1.5, `plain RMS ${r.rmsDirtyPlain.toFixed(2)}°`);
+T('it sets aside about as many frames as were misread, and few honest ones',
+  r.caught >= r.injected * 0.8 && r.caught <= r.injected + 6,
+  `${r.caught.toFixed(1)} set aside, ${r.injected.toFixed(1)} injected`);
+T('and on a clean ride it drops almost nothing', r.cleanDropped <= 4, `${r.cleanDropped.toFixed(1)} frames`);
+T('the resampled uncertainty is calibrated: it claims about the error that is made',
+  r.meanSe > r.rmsFit * 0.6 && r.meanSe < r.rmsFit * 1.7,
+  `claims ±${r.meanSe.toFixed(2)}°, actual RMS ${r.rmsFit.toFixed(2)}° over ${r.bootRevs} revolutions`);
+
 
 await b.close();
 finish();
