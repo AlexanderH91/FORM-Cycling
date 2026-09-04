@@ -1,4 +1,4 @@
-import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FINE_MODEL_TIMEOUT_MS, SUBFRAME, SANITY,
+import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FINE_MODEL_TIMEOUT_MS, SUBFRAME, SANITY, FINE_OFFSET,
          FEMUR_OVER_HEIGHT, AXLE_ALONG_FOOT } from "./config.js";
 import { boneLengths, bestLeg, movedTooFar } from "./limbs.js";
 import { crankAngles, harmonic, cadenceFrom, framesAt, BDC, TDC, THREE } from "./cycle.js";
@@ -231,9 +231,10 @@ function fitCircle(pts) {
   return { cx, cy, r, residual: median(off) / r, n };
 }
 
-export function pedalAxle(rows) {
+export function pedalAxle(rows, diag = {}) {
   const usable = rows.filter((r) => r.fy && Number.isFinite(r.fy.toe) && Number.isFinite(r.fy.heel)
     && r.conf >= CAPTURE.minJointVisibility);
+  diag.footFrames = usable.length;
   if (usable.length < 40) return null;
 
   let best = null;
@@ -248,6 +249,9 @@ export function pedalAxle(rows) {
   /* A foot that never traced a circle worth the name — the rider stopped
      pedalling, or the model lost the foot. Better to fall back to the
      population figure than to build centimetres on a bad fit. */
+  /* What the best circle looked like, whether or not it was good enough —
+     so a ride whose curve fell back to one-frame reads says how close it came. */
+  if (best) { diag.residual = +best.residual.toFixed(3); diag.along = best.along; diag.crank = +best.r.toFixed(4); }
   if (!best || best.residual > 0.12) return null;
   return best;
 }
@@ -371,16 +375,31 @@ export function nugget({ knee, toe, hip, cadence }) {
    rides: one frame per stroke lands 1.7° from the truth on average, the curve
    0.7°. It is computed from the sweep alone, before any frame is re-read by
    the other model, so one median never mixes two models. */
-export function strokeCurve(rows, fps) {
-  const spindle = pedalAxle(rows);
-  if (!spindle) return null;
+/* The systematic gap between the two pose models on this clip: the accurate
+   model's reading minus the sweep's, on the very same frames, as a median over
+   the strokes both have read. A handful of strokes is not evidence of a bias,
+   and a gap of many degrees is a frame one of them misread rather than a
+   calibration difference, so both cases return nothing and the curve stands
+   uncorrected. */
+export function modelOffset(rows, idxs, key) {
+  const d = idxs.map((i) => rows[i]?.sweep).filter((s) => s?.fine)
+    .map((s) => s.fine[key] - s[key]).filter(Number.isFinite);
+  if (d.length < FINE_OFFSET.minStrokes) return null;
+  const m = median(d);
+  if (!(Math.abs(m) <= FINE_OFFSET.maxDeg)) return null;
+  return { value: +m.toFixed(2), sd: +sd(d).toFixed(2), n: d.length };
+}
+
+export function strokeCurve(rows, fps, diag = {}) {
+  const spindle = pedalAxle(rows, diag);
+  if (!spindle) { diag.why = "no pedal circle"; return null; }
   const usable = (r) => r.fy && Number.isFinite(r.fy.toe) && r.conf >= CAPTURE.minJointVisibility;
   const pts = rows.map((r) => usable(r)
     ? { x: r.x.toe + spindle.along * (r.x.heel - r.x.toe), y: r.fy.toe + spindle.along * (r.fy.heel - r.fy.toe) }
     : null);
   const theta = crankAngles(pts, spindle);
   const cad = cadenceFrom(theta, rows.map((r) => r.t));
-  if (!cad || cad.revolutions < 4) return null;
+  if (!cad || cad.revolutions < 4) { diag.why = cad ? `only ${cad.revolutions.toFixed(1)} revolutions` : "no cadence"; return null; }
   const { forward } = threeOClock(rows, fps);
 
   const fitOf = (get) => harmonic(theta, rows.map((r) => (usable(r) ? get(r) : NaN)), 3);
@@ -389,7 +408,7 @@ export function strokeCurve(rows, fps) {
     toe: fitOf((r) => r.toeDown), hip: fitOf((r) => r.hip), torso: fitOf((r) => r.torso),
     kneeX: fitOf((r) => r.x.knee), toeX: fitOf((r) => r.x.toe), heelX: fitOf((r) => r.x.heel),
   };
-  if (!fits.knee) return null;
+  if (!fits.knee) { diag.why = "knee curve did not fit"; return null; }
   const revs = Math.max(1, Math.round(cad.revolutions));
   const read = (fit, at) => (fit ? { value: fit.at(at), sd: fit.sdNear(at), n: revs, of: revs, curve: true } : null);
 
@@ -1628,7 +1647,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     const step = 1 / (FPS * SUBFRAME.divisor);
     let done = 0, reads = 0;
     for (const [n, i] of pick.entries()) {
-      let best = null;
+      let best = null, same = null;
       for (let k = -steps; k <= steps; k++) {
         const t = rows[i].t + k * step;
         if (t < t0 || t > end) continue;
@@ -1636,10 +1655,19 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
         reads++;
         if (!got) continue;
         const m = readFrame(got.p, t, got.w);
+        if (k === 0) same = m;
         const better = !best || (wantLow ? m.ankleY > best.ankleY : m.ankleY < best.ankleY);
         if (better) best = m;
       }
-      if (best) { Object.assign(rows[i], best); done++; }
+      if (best) {
+        /* The sweep's reading of this exact frame, kept beside the accurate
+           one. Same frame, two models: the difference is the systematic gap
+           between them on this clip, and that is what corrects the curve. */
+        if (same && !rows[i].refined)
+          rows[i].sweep = { kneeBend: rows[i].kneeBend, hip: rows[i].hip, toeDown: rows[i].toeDown,
+                            fine: { kneeBend: same.kneeBend, hip: same.hip, toeDown: same.toeDown } };
+        Object.assign(rows[i], best); done++;
+      }
       onProgress(from + ((to - from) * (n + 1)) / pick.length);
     }
     timing.refineMs = (timing.refineMs ?? 0) + Math.round(performance.now() - t1);
@@ -1654,7 +1682,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
 
   onProgress(87, "Finding the bottom of each stroke…");
   /* From the sweep alone, before any frame is re-read by the other model. */
-  const curve = strokeCurve(rows, FPS);
+  const curveDiag = {};
+  const curve = strokeCurve(rows, FPS, curveDiag);
   const ay = rows.map((r) => r.ankleY);
   const bdc = curve && curve.bdcFrames.length >= 5 ? curve.bdcFrames : findPeaks(ay, FPS * 0.45, 0.25);
   const tdcIdx = curve && curve.tdcFrames.length >= 5 ? curve.tdcFrames : findPeaks(ay.map((v) => -v), FPS * 0.45, 0.25);
@@ -1667,10 +1696,22 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      the report was measured to a different standard than the one above it. */
   onProgress(88, "Re-reading the bottom of each stroke closely\u2026");
   let refined = 0, refinedTop = 0;
-  try { refined = await refine(bdc, true, 88, 91); } catch { /* the sweep still stands */ }
+  /* With a curve to carry the numbers, the accurate model's job changes. It no
+     longer has to find the extreme of each stroke — the curve does that from
+     every frame — but to say how far the sweep model reads from it on this
+     clip. That is a same-frame comparison, so no sub-frame search, and a
+     median offset settles in a dozen strokes, so fewer of them. Without a
+     curve the old one-frame-per-stroke read stands and gets the full pass. */
+  const fineBudget = curve ? FINE_OFFSET.strokes : REFINE_STROKES;
+  const fineSteps = curve ? 0 : SUBFRAME.steps;
+  /* A failure here is recorded, never swallowed. The catch used to be empty,
+     and it hid a ReferenceError for a week. */
+  try { refined = await refine(bdc, true, 88, 91, fineBudget, fineSteps); }
+  catch (e) { timing.refineError = e?.message ?? "refine failed"; }
   if (refined && tdcIdx.length) {
     onProgress(91, "And the top of each stroke\u2026");
-    try { refinedTop = await refine(tdcIdx, false, 91, 94); } catch { /* as above */ }
+    try { refinedTop = await refine(tdcIdx, false, 91, 94, fineBudget, fineSteps); }
+    catch (e) { timing.refineError = e?.message ?? "refine failed"; }
   }
 
   /* SADDLE FORE/AFT — the gap every review of these apps points at.
@@ -1686,11 +1727,12 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      figure moves slowly through that part of the circle, so there is nothing
      for a sub-frame search to find, but there is no reason for one card to be
      measured by the smaller model when the rest are not. */
-  if (refined) {
+  if (refined && !curve) {   // the curve reads fore/aft from every frame; only the one-frame path needs these
     const { three } = threeOClock(rows, FPS);
     if (three.length) {
       onProgress(94, "Re-reading the cranks-level frames\u2026");
-      try { await refine(three, true, 94, 95, REFINE_STROKES, 0); } catch { /* sweep stands */ }
+      try { await refine(three, true, 94, 95, REFINE_STROKES, 0); }
+      catch (e) { timing.refineError = e?.message ?? "refine failed"; }
     }
   }
   const foreaftPk = kneeOverAxle(rows, FPS);
@@ -1745,10 +1787,23 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   const kneeFlatPk = stat(bdcM, "kneeFlat");
   const toePk = stat(bdcM, "toeDown");
   const hipPk = tdcM.length ? stat(tdcM, "hip") : null;
-  const kneeBDC = curve?.kneeBDC ?? kneePk;
+  /* THE CURVE, CORRECTED BY THE ACCURATE MODEL. The curve is fitted to the
+     sweep model's reading of every frame, so it averages that model's noise
+     away — but not its bias. The accurate model read the same frames at the
+     bottom and top of the stroke, and the median difference between the two
+     on identical frames is that bias, measured on this clip rather than
+     assumed. Applying it gives the curve's steadiness with the accurate
+     model's calibration, and the correction travels with the report so the
+     stored rides show its size. */
+  const fineOffset = curve ? {
+    knee: modelOffset(rows, bdc, "kneeBend"), toe: modelOffset(rows, bdc, "toeDown"),
+    hip: modelOffset(rows, tdcIdx, "hip"),
+  } : null;
+  const corrected = (read, off) => (read && off ? { ...read, value: read.value + off.value, corrected: off.value } : read);
+  const kneeBDC = corrected(curve?.kneeBDC, fineOffset?.knee) ?? kneePk;
   const kneeFlatBDC = curve?.kneeFlatBDC ?? kneeFlatPk;
-  const toeBDC = curve?.toeBDC ?? toePk;
-  const hipTDC = curve?.hipTDC ?? hipPk;
+  const toeBDC = corrected(curve?.toeBDC, fineOffset?.toe) ?? toePk;
+  const hipTDC = corrected(curve?.hipTDC, fineOffset?.hip) ?? hipPk;
   const torso = stat(allIdx, "torso");
   if (!kneeBDC) { release(); return { gate: "We saw you pedalling but never clearly enough at the bottom of the stroke to measure the knee. Move the phone to saddle height, 2–3 m out to the side, and film again.", capture }; }
 
@@ -1791,7 +1846,12 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      are a rider whose reads disagree, and saying otherwise would be the app
      inventing a consistency the data does not have. */
   const sameSide = pooled.vals.every((v) => v < kLo) || pooled.vals.every((v) => v > kHi);
-  const spread = pooled.hi - pooled.lo;
+  /* Not `spread`: that name is the module-level helper the refine pass calls,
+     and a `const spread` in this function put it in the temporal dead zone for
+     the whole body — every call to refine() threw a ReferenceError that the
+     catch below swallowed, and for a week no ride was read by the accurate
+     model while the report said it was. tests/shadowing.test.mjs guards it. */
+  const pooledSpread = pooled.hi - pooled.lo;
 
   /* One fix per report, ranked: an honest statement of where the rider sits
      outranks any prescription, because a change built on a coin flip is worse
@@ -1817,7 +1877,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      `again: true` when what it needs is another ride. A fix that wants neither
      gets no button and the card simply ends. */
   let fix;
-  if (pooled.settled && !sameSide && spread > kHi - kLo)
+  if (pooled.settled && !sameSide && pooledSpread > kHi - kLo)
     fix = {
       /* This card told a rider their camera was at fault in a sentence about
          degrees, and then asked them to film again — for the ninth time. Say
@@ -2150,6 +2210,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       method: curve ? "curve" : "peaks",
       revolutions: curve?.revolutions ?? null,
       curveFit: curve?.fit ?? null,
+      // why there was no curve, and how close the pedal circle came
+      curveDiag: curve ? null : curveDiag,
+      // accurate-minus-sweep on identical frames; what the curve was shifted by
+      fineOffset,
       peaks: { knee: kneePk ? +kneePk.value.toFixed(1) : null, kneeSd: kneePk ? +kneePk.sd.toFixed(1) : null,
                toe: toePk ? +toePk.value.toFixed(1) : null, hip: hipPk ? +hipPk.value.toFixed(1) : null,
                cadence: +cadencePk.toFixed(1), foreaft: foreaftPk ? +foreaftPk.ofFemur.toFixed(3) : null },

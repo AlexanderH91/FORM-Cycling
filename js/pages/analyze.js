@@ -720,7 +720,7 @@ export function drawReport(view, r, clips) {
         ? `${r.refined.strokes} strokes re-read with the ${r.refined.model} model${
             r.refined.top ? `, ${r.refined.top} at the top too` : ""}${
             r.refined.fineReads ? ` · ${r.refined.fineReads} frames looked at` : ""}`
-        : `read with the ${r.refined.sweep} model only${r.refined.fineModelError ? ` — ${r.refined.fineModelError}` : ""}`}${
+        : `read with the ${r.refined.sweep} model only${(r.refined.fineModelError ?? r.refined.refineError) ? ` — ${r.refined.fineModelError ?? r.refined.refineError}` : ""}`}${
       r.refined.modelLoadMs != null ? ` · model loaded in ${(r.refined.modelLoadMs / 1000).toFixed(1)}s` : ""}${
       r.refined.refineMs != null ? ` · re-read took ${(r.refined.refineMs / 1000).toFixed(1)}s` : ""}${
       r.refined.totalMs != null ? ` · ${(r.refined.totalMs / 1000).toFixed(1)}s in total` : ""}` : ""}</div>`}`;

@@ -39,7 +39,7 @@ const r = await page.evaluate(async () => {
        curve is preferred where the clip gives one, and the peak read travels
        beside it for comparison. */
     hipUsesRefined: /const hipPk = tdcM\.length \? stat\(tdcM, "hip"\)/.test(src)
-      && /const hipTDC = curve\?\.hipTDC \?\? hipPk/.test(src),
+      && /const hipTDC = corrected\(curve\?\.hipTDC, fineOffset\?\.hip\) \?\? hipPk/.test(src),
     threeBeforeMeasure: src.indexOf('refine(three, true') < src.indexOf('const foreaftPk = kneeOverAxle'),
     countsReads: /timing\.fineReads/.test(src),
   };

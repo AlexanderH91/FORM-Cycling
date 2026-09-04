@@ -4,8 +4,8 @@
    page, which revalidates far more aggressively. The version badge shows both,
    so stale JavaScript announces itself instead of being mistaken for a bug —
    "is this the new code?" has cost more debugging rounds here than any bug. */
-export const VERSION = "v39";
-export const BUILD = "2026-09-04-v39";
+export const VERSION = "v40";
+export const BUILD = "2026-09-04-v40";
 
 // Shared FORM backend (same Supabase project as FORM Golf — one login everywhere).
 export const SUPABASE_URL = "https://nrmpntocdashxlzdqmcp.supabase.co";
@@ -119,6 +119,14 @@ export const REFINE_STROKES = 40;
    at its extreme. Five reads per stroke instead of one; the payoff is that the
    bottom of the stroke is the actual bottom. */
 export const SUBFRAME = { steps: 2, divisor: 3 };
+
+/* When the clip gives a curve, the accurate model is used differently: it
+   re-reads the same frames the sweep read, and the median difference between
+   the two is the sweep model's bias on this clip, which the curve is then
+   shifted by. A median over 16 strokes pins that offset to a fraction of a
+   degree; fewer than 5 is not evidence of a bias, and one beyond 8° is a
+   misread frame rather than a calibration gap, so neither is applied. */
+export const FINE_OFFSET = { strokes: 16, minStrokes: 5, maxDeg: 8 };
 
 /* How long to wait for the fine model before giving up on it. It is 30 MB, so
    this has to allow for a bad connection — but not indefinitely, because an
