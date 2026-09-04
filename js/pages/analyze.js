@@ -1,6 +1,6 @@
 import { supa } from "../supa.js";
 import { MAX_RECORD_MS, BUILD } from "../config.js";
-import { analyzeSideClip, analyzeFrontClip, analyzeRearClip, overlayAt, kneeReadOf } from "../analysis.js";
+import { analyzeSideClip, analyzeFrontClip, analyzeRearClip, overlayAt, kneeReadOf, whyFront, whyRock } from "../analysis.js";
 import { go } from "../main.js";
 import { appbar } from "../ui.js";
 
@@ -558,9 +558,9 @@ function addExtraViewCards(r) {
       name: "Knee travel (front)", shot: f.stills?.knees,
       means: "A knee that swings in or out is sending part of every stroke's work sideways instead of down into the pedal, and it is the pattern most often sitting behind an ache on the inside or the outside of the joint. Cleat position, saddle height and foot support all move it — which is why it is worth knowing before you change any of them.",
       value: both ? `${t.left}° L · ${t.right}° R` : `${t.left ?? t.right}° ${f.oneLegOnly === "left" ? "L" : "R"}`,
-      note: (both
-        ? "How far each knee swings in and out over a stroke, measured against straight up from the ankle."
-        : `Only your ${f.oneLegOnly} knee stayed in view long enough to measure. This is how far it swings in and out over a stroke.`)
+      note: whyFront(t.left, t.right) + " " + (both
+        ? "Measured against straight up from the ankle."
+        : `Only your ${f.oneLegOnly} knee stayed in view long enough to measure.`)
         + " There is no good published range to hold this against, so we will not score it."
         + (f.asymmetry ? " Your two sides can still be compared with each other, which is the card below." : "")
         + (hidden ? ` In ${hidden}% of the readings a knee was behind the bars or your own arm. We worked out where it was from your hip, your ankle and the length of your own thigh and shin, measured off the part of the ride where the leg was in clear view.` : ""),
@@ -588,13 +588,13 @@ function addExtraViewCards(r) {
       name: "Pelvic rock (behind)", shot: b.stills?.body,
       means: "Hips rocking side to side usually means you are reaching for the bottom of the stroke — the classic sign of a saddle a touch too high. Every degree of rock is effort going sideways instead of into the pedals, and it is what starts rubbing after two hours.",
       value: `${b.pelvicRock}°`,
-      note: "How far your hips tilt from side to side over a stroke. There is no good published figure for how much is too much, so we will not score it — read it next to the knee angle from the side view, which is the number that decides saddle height.",
+      note: `${whyRock(b.pelvicRock, b.shoulderRock)} There is no good published figure for how much is too much, so we will not score it — the knee angle from the side is the number that decides saddle height, and this is what backs it up or argues with it.`,
     });
     if (b.shoulderRock != null) r.cards.push({
       name: "Shoulder rock (behind)", shot: b.stills?.body,
       means: "Your shoulders sit on top of whatever your hips are doing, so they usually just follow. On their own, a bit of shoulder movement is often just how you ride and costs you almost no power. Alongside rocking hips it is the same problem showing up twice, and it is the saddle underneath that needs moving — steady the hips and the shoulders settle on their own.",
       value: `${b.shoulderRock}°`,
-      note: "How far your shoulder line tips from side to side over a stroke. Some of this is normal, especially out of the saddle or on a climb; it is worth attention mainly when your hips are moving too.",
+      note: `Your shoulder line tips ${b.shoulderRock}° over a stroke. ${b.pelvicRock != null && b.pelvicRock >= 4 ? "Your hips are moving underneath it, so this is the same thing showing up twice — steady the hips and the shoulders settle on their own." : "Your hips underneath are steady, so this is upper-body movement on its own: how you ride, and costing you almost nothing."}`,
     });
     // Rocking is classic evidence of reaching for the pedals. Say so only when
     // the side view already found the same thing, so the two never disagree.

@@ -251,6 +251,115 @@ export function pedalAxle(rows) {
   return best;
 }
 
+/* WHY THIS NUMBER IS RIGHT — OR NOT — FOR THIS RIDER, NOW.
+   A card that says "33°, in range" has told the rider a fact and left them to
+   trust it. The rule from the rider who uses this app: every measurement card
+   carries something tangible, and a perfect setup is still explained — WHY we
+   think it is perfect right now, in terms of what the body is doing at that
+   exact value. So each card's working opens with a sentence written for the
+   number that was actually measured: where in the range it sits, what that end
+   of the range means for the muscles doing the work, and what would change if
+   it moved. */
+export function whyNow(card, v, band) {
+  const d = Math.round(v);
+  const [lo, hi] = band ?? [NaN, NaN];
+  const third = (lo + hi) / 3;
+  switch (card) {
+    case "knee":
+      if (v < lo) return `At ${d}° your leg is straightening further than riders go. Each push ends with the knee close to locked, so the hip drops to reach the pedal and the hamstring takes strain the quad should have finished.`;
+      if (v > hi) return `At ${d}° your knee is still well bent at the bottom, so you never get through the strongest part of the push and the front of the knee carries more of every stroke than it needs to.`;
+      if (v < lo + (hi - lo) / 3) return `At ${d}° your leg is nearly straight at the bottom without locking out. That favours the glutes and hamstrings at the end of each push and leaves the knee a little slack to absorb the pedal coming round. It is the straighter end of right — if the back of your knee ever starts complaining, 2–3 mm down is the first thing to try.`;
+      if (v > hi - (hi - lo) / 3) return `At ${d}° your knee keeps a little more bend at the bottom than most riders. That loads the quads and the front of the knee a touch more and gives the hips nothing to reach for. If you ever want more leverage on a big gear, there is room to go up 2–3 mm.`;
+      return `At ${d}° your leg finishes the push with the big muscles above the knee, keeps enough bend to absorb the bottom of the stroke, and leaves your hips level. That is the middle of where riders sit, and nothing here would improve for a millimetre either way.`;
+    case "toe":
+      if (v > hi) return `At ${d}° toe-down you are reaching for the pedal with your toes. The calf is finishing every push, and it is a small muscle that tires long before the ones above the knee. It can also be the first sign of a saddle a touch high, so read it beside the knee angle above.`;
+      if (v < lo) return `At ${d}° your heel is dropping below level at the bottom. The ankle has already given everything it can, so the leg has to reach with the hip instead.`;
+      if (v < (lo + hi) / 2) return `At ${d}° toe-down your heel drops through the bottom of the stroke, which lets the calf relax and hands the last of the push to the muscles above the knee. That is the flatter end of right, and it is where the leg is most efficient.`;
+      return `At ${d}° toe-down your foot points down a little at the bottom — inside where riders sit, using the calf to finish the stroke without leaning on it. Fine as it is; it is worth a glance only if it creeps higher.`;
+    case "hip":
+      if (v < lo) return `At ${d}° your thigh meets your torso before the pedal reaches the top, so the stroke stalls there and has to restart on the way down. That is the catch riders feel, and it costs power exactly where the next push should begin.`;
+      if (v > hi) return `At ${d}° your hip has plenty of room at the top of the stroke — your thigh never gets near your torso, so the leg comes over the top freely and your breathing has all the space it wants. Comfortable, and it leaves room to get lower on the bars if speed on the flat matters to you.`;
+      if (v < (lo + hi) / 2) return `At ${d}° your hip closes fairly tight at the top of each stroke — inside what fitters work to, at the folded end. It suits a low, fast position and a back that bends well. If the top of the stroke ever feels like a catch, saddle setback or a spacer under the bars is what opens it.`;
+      return `At ${d}° there is comfortable room between thigh and torso at the top of each stroke. The pedal reaches the top before the hip runs out of room, so the stroke carries straight through instead of stalling, and your breathing has space to work.`;
+    case "cadence":
+      if (v < lo) return `At ${d} rpm each stroke asks more of the leg itself, so the muscles carry the effort and tire before your breathing does. You will feel it most in the last hour.`;
+      if (v > hi) return `At ${d} rpm your heart and lungs are carrying most of the effort and staying there — fine until the breathing is what limits you, on a climb or at the end of a hard hour.`;
+      return `At ${d} rpm the effort is shared: your legs turn light enough not to burn out early, and your breathing is not yet the limit. That balance is what lets the last hour feel like the first.`;
+    case "torso":
+      if (v < 20) return `At ${d}° above horizontal you are riding very low. That saves the most air at speed, and it asks the most of your hip flexors and lower back to hold — a position worth having if you can stay in it.`;
+      if (v < 30) return `At ${d}° above horizontal your back is in a moderate road position: low enough to save you real effort at speed, high enough that your lungs have room and your hip flexors can hold it for hours. Most of the gain from getting lower has already been taken here.`;
+      if (v < 45) return `At ${d}° your back is fairly upright — easy for your hips and lower back to hold, easy to breathe in, at the cost of more air to push through at speed. Comfortable for long days; there is position to find if the flat gets faster.`;
+      return `At ${d}° your back is nearly upright and your arms are carrying very little. It is the easiest position there is to hold, and there is a lot of speed sitting unused between here and the bars — your hips and lower back would need to get used to it gradually.`;
+    default: return "";
+  }
+}
+
+/* The same, for the knee over the pedal, which has no range to be in. */
+export function whyForeAft(ofFemur, cm) {
+  const near = Math.abs(ofFemur) < 0.07;
+  const where = cm != null ? `${Math.abs(cm).toFixed(1)} cm ${cm > 0 ? "ahead of" : "behind"}` : (ofFemur > 0 ? "ahead of" : "behind");
+  if (near) return `Your knee sits ${cm != null ? `within ${Math.abs(cm).toFixed(1)} cm of` : "stacked over"} the pedal axle with the cranks level — the reference point fitters start from. The work splits evenly between quads and glutes, and your hands carry no more of your weight than they need to.`;
+  if (ofFemur > 0) return `Your knee sits ${where} the pedal axle with the cranks level. That leans the work onto the quads and the front of the knee and puts a little more of your weight on the bars — the punchy, forward position some riders choose on purpose, and one worth knowing you are in.`;
+  return `Your knee sits ${where} the pedal axle with the cranks level. That brings the glutes and hamstrings into each push and takes weight off your hands — the position many endurance riders settle into, and one worth knowing you are in.`;
+}
+
+/* And for the two views with no range to be in: said for the number measured,
+   in terms of what the body is doing, so a level pelvis is explained rather
+   than merely reported. */
+export function whyFront(left, right) {
+  const both = left != null && right != null;
+  const big = Math.max(left ?? 0, right ?? 0);
+  const l = left != null ? `${left.toFixed(0)}°` : null, r = right != null ? `${right.toFixed(0)}°` : null;
+  const pair = both ? `${l} on the left and ${r} on the right` : `${l ?? r} on the one knee we could see`;
+  if (big < 8) return `Your knees track close to straight — ${pair} over a stroke — so each push goes down into the pedal rather than out to the side, and the joint is loaded the way it is built to be. This is the pattern riders with no knee trouble tend to show.`;
+  if (big < 15) return `Your knees swing ${pair} over a stroke — more than the straightest riders, enough that a share of each push is going sideways. Not a problem on its own; it becomes worth acting on if either knee aches on the inside or the outside, and cleat angle is the first thing to look at.`;
+  return `Your knees swing ${pair} over a stroke, which is a lot. That much sideways movement usually traces back to the feet — cleat angle, or a foot that wants support it is not getting — and it is the most common thing sitting behind an ache on the inside of the knee.`;
+}
+
+export function whyRock(pelvis, shoulder) {
+  const p = pelvis != null ? pelvis : null;
+  if (p == null && shoulder != null)
+    return `Your shoulder line tips ${shoulder.toFixed(0)}° over a stroke. On its own that is mostly how you ride; it matters when the hips underneath are moving too, and we could not read them cleanly this time.`;
+  if (p < 3) return `Your hips tilt ${p.toFixed(0)}° over a stroke — effectively level. You are not reaching for the pedals at the bottom, which backs up the saddle height read from the side: the leg is getting to the pedal without the pelvis having to help.`;
+  if (p < 6) return `Your hips tilt ${p.toFixed(0)}° over a stroke — a little rock, and most riders show some. Beside a knee angle at the straighter end it would point at a saddle a touch high; beside a knee angle in the middle it is simply how you ride.`;
+  return `Your hips tilt ${p.toFixed(0)}° over a stroke, which is real rocking: your pelvis is dropping to reach the bottom of each stroke. That is the body coping with a saddle that is slightly too high, and it is what starts rubbing two hours into a long ride.`;
+}
+
+/* THE NUGGET. A rider whose setup is right still opens the report to
+   something worth reading — not a list of things that were fine, but the one
+   thing about THEIR riding that is most distinctive: whichever measurement sits
+   furthest from the middle of its range, said as what it means and what to
+   keep an eye on. It is chosen by distance from the middle in units of each
+   range's own width, so a foot at the top edge outranks a knee dead centre. */
+export function nugget({ knee, toe, hip, cadence }) {
+  const [kLo, kHi] = BANDS.kneeBendBDC, [tLo, tHi] = BANDS.footToeDown6, [hLo, hHi] = BANDS.hipTDC, [cLo, cHi] = BANDS.cadence;
+  const edge = (v, lo, hi) => (v == null ? 0 : (v - (lo + hi) / 2) / ((hi - lo) / 2));
+  const c = [
+    { k: "knee", e: edge(knee, kLo, kHi) },
+    { k: "toe", e: edge(toe, tLo, tHi) },
+    { k: "hip", e: edge(hip, hLo, hHi) },
+    { k: "cadence", e: edge(cadence, cLo, cHi) },
+  ].filter((x) => Number.isFinite(x.e)).sort((a, b) => Math.abs(b.e) - Math.abs(a.e));
+  const top = c[0];
+  if (!top || Math.abs(top.e) < 0.4)
+    return `Everything we measured sits near the middle of its range — knee ${Math.round(knee)}° at the bottom, ${Math.round(cadence)} rpm — which is rarer than it sounds. Most riders have one number leaning on an edge; you do not have one to watch.`;
+  const d = (v) => Math.round(v);
+  switch (top.k) {
+    case "knee": return top.e < 0
+      ? `The one to keep an eye on is your knee: ${d(knee)}° at the bottom is the straighter end of right. It favours the glutes and it works — if the back of the knee ever starts complaining on long rides, that is why, and 2–3 mm down is the answer.`
+      : `The one to keep an eye on is your knee: ${d(knee)}° at the bottom keeps more bend than most riders. It loads the quads a touch more and it works — if you ever want more leverage on a big gear, there is room to raise the saddle 2–3 mm.`;
+    case "toe": return top.e > 0
+      ? `The one to keep an eye on is your foot: ${d(toe)}° toe-down at the bottom is right up at the top of where riders go. It works now; if your calves are the first thing to tire on a long climb, this is why, and thinking about dropping the heel through the bottom is the fix.`
+      : `The one to keep an eye on is your foot: at ${d(toe)}° toe-down your heel drops further through the bottom than most. It hands the work to the big muscles above the knee, which is efficient — just make sure the ankle is not being asked to give more than it has.`;
+    case "hip": return top.e < 0
+      ? `The one to keep an eye on is the top of your stroke: at ${d(hip)}° your hip closes tighter than most riders' at the top. It suits a low, fast position — if the top of the stroke ever feels like a catch, saddle setback or a spacer under the bars opens it.`
+      : `The one to keep an eye on is the top of your stroke: at ${d(hip)}° your hip stays more open than most, which is comfortable and easy to breathe in. If speed on the flat matters to you, there is room to get lower on the bars before the hip runs out of space.`;
+    default: return top.e < 0
+      ? `The one to keep an eye on is your cadence: ${d(cadence)} rpm is the grinding end of right. Your legs carry more of each stroke than your breathing does — fine for short efforts, and worth a gear lower when the ride gets long.`
+      : `The one to keep an eye on is your cadence: ${d(cadence)} rpm is the spinning end of right. Your heart and lungs carry more of the effort than your legs — light on the muscles, and worth a gear higher if your breathing is what gives out first on climbs.`;
+  }
+}
+
 /* THE WHOLE STROKE AT ONCE.
    Every number the side view reports is taken at a moment of the pedal
    circle: the knee and the foot at the bottom, the hip at the top, the knee
@@ -1794,9 +1903,11 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       /* Nothing to prescribe, so the card stops calling itself a fix. */
       kicker: "Where you are",
       title: "Nothing here is holding you back",
-      line: `Knee ${k}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""}, foot and hip both where fitters want them, cadence ${cadence.toFixed(0)} rpm. Your leg is finishing every push with the big muscles above the knee.`,
+      /* Not a list of things that were fine — the one thing about this
+         rider's stroke that is most worth knowing, with what to watch for. */
+      line: nugget({ knee: pooled.value, toe: toeBDC?.value, hip: hipTDC?.value, cadence }),
       cue: "Ride it. Film again in a month, or the day after anything on the bike moves.",
-      why: "This is the position the rest of a fit is built on, and it is settled — which means the gains left are in things the side view cannot see: whether your knees track straight, and whether you sit level. Both need the other two angles.",
+      why: `Knee ${k}° at the bottom${pooled.rides > 1 ? ` across ${pooled.rides} rides` : ""}, foot and hip both where fitters want them, cadence ${cadence.toFixed(0)} rpm — your leg is finishing every push with the big muscles above the knee. This is the position the rest of a fit is built on, and it is settled, which means the gains left are in things the side view cannot see: whether your knees track straight, and whether you sit level. Both need the other two angles.`,
     };
 
   /* The picture has to be of the stroke the number describes, so show the one
@@ -2048,14 +2159,14 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       { name: "Knee at 6 o'clock", value: k + "°", shot: shots.get("knee"),
         means: "This one setting decides where your power comes from. Straighten too far and you reach for the bottom of the stroke, so the hips rock and the load slides onto the back of the knee. Stay too folded and you never get through the strongest part of the push. Between those two the leg works where it is strongest, and long rides stop aching in the same place.",
         verdict: pooled.settled && pooledVerdict === "borderline" ? "At edge" : word(pooledVerdict),
-        note: `Riders sit between ${kLo}° and ${kHi}° at the bottom of the stroke, and where you land in that is what tells you whether the saddle is at the right height. Your own strokes varied by ${kSd}° either way, and across the ${kneeBDC.n} ${kneeBDC.n < kneeBDC.of ? `of ${kneeBDC.of} strokes we could read clearly` : "strokes we could read clearly"}, this ride comes out at ${k}°, give or take ${kU.toFixed(1)}°.${
+        note: `${whyNow("knee", pooled.value, BANDS.kneeBendBDC)} Riders sit between ${kLo}° and ${kHi}° at the bottom of the stroke, and where you land in that is what tells you whether the saddle is at the right height. Your own strokes varied by ${kSd}° either way, and across the ${kneeBDC.n} ${kneeBDC.n < kneeBDC.of ? `of ${kneeBDC.of} strokes we could read clearly` : "strokes we could read clearly"}, this ride comes out at ${k}°, give or take ${kU.toFixed(1)}°.${
           pooled.rides > 1 ? ` Counting your previous ${pooled.rides - 1} ride${pooled.rides > 2 ? "s" : ""} too: ${pv}°, give or take ${pooled.u.toFixed(1)}°.` : ""}` },
       ...(toeBDC ? [{ name: "Foot at 6 o'clock", shot: shots.get("foot"),
         means: "Pointing the toe hard at the bottom hands the work to your calf — a far smaller muscle than the ones above the knee, and the first to go on a long climb. A flatter foot lets the quad and glute finish the stroke instead.", value: toeBDC.value.toFixed(0) + "° toe-down", verdict: word(toeVerdict),
-        note: `Most riders come through the bottom between ${BANDS.footToeDown6[0]}° and ${BANDS.footToeDown6[1]}° toe-down. Yours moved by ${toeBDC.sd.toFixed(1)}° either way from stroke to stroke.` }] : []),
+        note: `${whyNow("toe", toeBDC.value, BANDS.footToeDown6)} Most riders come through the bottom between ${BANDS.footToeDown6[0]}° and ${BANDS.footToeDown6[1]}° toe-down. Yours moved by ${toeBDC.sd.toFixed(1)}° either way from stroke to stroke.` }] : []),
       ...(hipTDC ? [{ name: "Hip fold at the top", shot: shots.get("hip"),
         means: "How far you are folded shut at the top of each stroke, where your thigh comes up to meet your torso. Fold too far and your hip runs out of room before the pedal reaches the top, so the stroke stalls there instead of carrying through — riders feel it as a catch, or as not being able to get low on the bars without the power falling away. It opens up through saddle setback and bar height, not by trying harder.", value: hipTDC.value.toFixed(0) + "°", verdict: word(verdictFor(hipTDC, BANDS.hipTDC)),
-        note: `Fitters work to ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° here. Where in that a particular rider should sit comes down to how much movement they have in the hips and lower back, which is not something we can see from the video. Yours moved by ${hipTDC.sd.toFixed(1)}° either way from stroke to stroke.` }] : []),
+        note: `${whyNow("hip", hipTDC.value, BANDS.hipTDC)} Fitters work to ${BANDS.hipTDC[0]}–${BANDS.hipTDC[1]}° here. Where in that a particular rider should sit comes down to how much movement they have in the hips and lower back, which is not something we can see from the video. Yours moved by ${hipTDC.sd.toFixed(1)}° either way from stroke to stroke.` }] : []),
       /* Reported as a position, never as a verdict: knee-over-axle is where
          fitters START, not where riders should end up, and the two assumptions
          under the centimetre figure are named rather than hidden. */
@@ -2070,7 +2181,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
           ? `${foreaft.cm > 0 ? "+" : ""}${foreaft.cm.toFixed(1)} cm`
           : Math.abs(foreaft.ofFemur) < 0.07 ? "Over the pedal"
           : foreaft.ofFemur > 0 ? "Ahead of the pedal" : "Behind the pedal",
-        note: `A plus sign means your knee is ahead of the pedal axle with the cranks level. Fitters usually start with the two roughly stacked and then move the saddle to suit the rider, so this is a starting point rather than something to hit — we do not score it. Measured over ${foreaft.n} strokes.${
+        note: `${whyForeAft(foreaft.ofFemur, foreaft.cm)} A plus sign means your knee is ahead of the pedal axle with the cranks level. Fitters usually start with the two roughly stacked and then move the saddle to suit the rider, so this is a starting point rather than something to hit — we do not score it. Measured over ${foreaft.n} strokes.${
           foreaft.ruler === "crank"
             ? " The centimetres come off your own pedals: your foot traces a circle as you ride, and that circle is the crank, which is 17 cm on almost every bike. Nothing here is assumed about your body."
             : foreaft.cm != null
@@ -2078,9 +2189,9 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
               : " Add your height on the Me screen to see this in centimetres."}`,
       }] : []),
       { name: "Cadence", value: cadence.toFixed(0) + " rpm",
-        means: "Spinning faster shifts the effort off your legs and onto your heart and lungs; grinding does the opposite. Neither is wrong — but a long way from your natural cadence costs you late in a ride, when whichever system is carrying it starts to fade.", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `Experienced riders mostly settle between ${BANDS.cadence[0]} and ${BANDS.cadence[1]} rpm. Below that you are pushing harder on each stroke; above it your heart and lungs are carrying more of it.` },
+        means: "Spinning faster shifts the effort off your legs and onto your heart and lungs; grinding does the opposite. Neither is wrong — but a long way from your natural cadence costs you late in a ride, when whichever system is carrying it starts to fade.", verdict: cadence >= BANDS.cadence[0] && cadence <= BANDS.cadence[1] ? "OK" : "", note: `${whyNow("cadence", cadence, BANDS.cadence)} Experienced riders mostly settle between ${BANDS.cadence[0]} and ${BANDS.cadence[1]} rpm. Below that you are pushing harder on each stroke; above it your heart and lungs are carrying more of it.` },
       { name: "Torso angle", value: torso.value.toFixed(0) + "°", shot: shots.get("torso"),
-        means: "Folding lower puts less of you in the wind, and on the flat pushing air out of the way is where nearly all of your effort ends up going. But a low back asks more of your hip flexors to hold, and squeezes the room your lungs have to work in. The right answer is the lowest you can hold without shifting about, because a position you keep climbing out of is slower than a higher one you can stay in all day.", note: "Measured up from horizontal, so a smaller number is a flatter back. What flattening out is actually worth to you depends on how fast you are going — most of it at speed on the flat, almost none of it grinding up a climb." },
+        means: "Folding lower puts less of you in the wind, and on the flat pushing air out of the way is where nearly all of your effort ends up going. But a low back asks more of your hip flexors to hold, and squeezes the room your lungs have to work in. The right answer is the lowest you can hold without shifting about, because a position you keep climbing out of is slower than a higher one you can stay in all day.", note: `${whyNow("torso", torso.value)} Measured up from horizontal, so a smaller number is a flatter back. What flattening out is actually worth to you depends on how fast you are going — most of it at speed on the flat, almost none of it grinding up a climb.` },
     ]),
   };
 }

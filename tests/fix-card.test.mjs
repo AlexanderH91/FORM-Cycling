@@ -144,6 +144,28 @@ T('a fix that wants another ride offers the camera, not a logbook',
     /kicker: "Where you are"/.test(block) && /Nothing here is holding you back/.test(block));
 }
 
+/* A rider whose setup is right still opens the report to something worth
+   reading — the one thing about THEIR stroke most worth knowing, not a list of
+   things that were fine. */
+const nug = await page.evaluate(async () => {
+  const { nugget } = await import('/js/analysis.js');
+  return {
+    footHigh: nugget({ knee: 34, toe: 20, hip: 50, cadence: 86 }),
+    kneeStraight: nugget({ knee: 30.5, toe: 12, hip: 51, cadence: 85 }),
+    grinder: nugget({ knee: 35, toe: 12, hip: 51, cadence: 66 }),
+    dead: nugget({ knee: 35, toe: 12.5, hip: 51, cadence: 85 }),
+  };
+});
+T('a foot at the top of its range outranks a knee in the middle',
+  /your foot/.test(nug.footHigh) && /20°/.test(nug.footHigh), `"${nug.footHigh.slice(0, 70)}…"`);
+T('a knee at the straight end is the thing to watch when nothing else leans',
+  /your knee/.test(nug.kneeStraight) && /straighter end/.test(nug.kneeStraight));
+T('cadence at the grinding end is named as such', /grinding end/.test(nug.grinder));
+T('and a rider with nothing leaning is told that is rare, not told nothing',
+  /rarer than it sounds/.test(nug.dead), `"${nug.dead.slice(0, 70)}…"`);
+T('every nugget quotes the rider\'s own number and hands over something to watch',
+  [nug.footHigh, nug.kneeStraight, nug.grinder].every((t) => /\d/.test(t) && /keep an eye on/.test(t) && /\byou\b|\byour\b/.test(t)));
+
 await b.close();
 
 /* Each fix branch has to keep to the shape: one sentence found, one to do. */
