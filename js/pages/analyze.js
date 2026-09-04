@@ -710,7 +710,8 @@ export function drawReport(view, r, clips) {
         actually needs refilming. */""}
   ${r.gate ? `<div class="footnote">Nothing was measured from this clip · build ${BUILD} · the video never left your phone</div>` : `
   <div class="footnote">Analyzed on your phone across ${r.strokes ?? "–"} pedal strokes${
-    r.capture?.offSquareDeg != null ? ` · camera about ${r.capture.offSquareDeg}° off square` : ""} · build ${BUILD} · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}
+    r.capture?.offSquareDeg != null ? ` · camera about ${r.capture.offSquareDeg}° off square${r.capture.squarenessFrom === "wheel" ? ", read off the front wheel" : ""}` : ""}${
+    r.scale?.crankMm != null ? ` · your front wheel gives the scale, and by it your crank measures ${r.scale.crankMm} mm${r.scale.rulersAgree ? "" : " — which is not a crank, so one of the two rulers is off and centimetres here are rough"}` : ""} · build ${BUILD} · video and these frames never leave the phone · ${r.front || r.rear ? "all captured views measured" : "front & behind add more when you film them"}
     ${/* What the accurate model cost, in seconds, on this phone. Reported
           because "does heavy take too long?" is a question with an answer, and
           a rider on a slow connection deserves to see where the time went. */""}

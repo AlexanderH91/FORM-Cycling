@@ -2,6 +2,7 @@ import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MOD
          FEMUR_OVER_HEIGHT, AXLE_ALONG_FOOT } from "./config.js";
 import { boneLengths, bestLeg, movedTooFar } from "./limbs.js";
 import { crankAngles, harmonic, cadenceFrom, framesAt, BDC, TDC, THREE } from "./cycle.js";
+import { findWheel, settleWheel, calibrate, WHEEL_MM } from "./wheel.js";
 
 /* On-device side-view analysis.
    MediaPipe Pose Landmarker (WASM) runs in the browser; the video never
@@ -1917,6 +1918,55 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      the moment it was taken is evidence. One still per measurement, pulled in
      time order after a single rewind, because seeking backwards through a
      MediaRecorder file is the slow part. */
+  /* THE BIKE AS THE RULER. A few frames spread through the clip, downscaled,
+     and the front wheel found in each; the bike is static on a trainer so the
+     median across frames is one wheel. Its long axis is 670 mm whichever bike
+     it is, which gives millimetres per frame-unit with nothing assumed about
+     the rider — and a second, independent check on the crank the foot drew:
+     the two rulers have to agree on how long a 172.5 mm crank looks, or one of
+     them is wrong. */
+  onProgress(94, "Finding the wheel…");
+  let wheel = null, scale = null;
+  try {
+    const grabs = [];
+    const span = end - t0;
+    for (const f of [0.2, 0.4, 0.6, 0.8]) {
+      const t = t0 + f * span;
+      if (!(await seekTo(video, t, 3000))) continue;
+      await paintedFrame(video, 300);
+      const W = 320, H = Math.round((video.videoHeight / video.videoWidth) * W);
+      const c = document.createElement("canvas"); c.width = W; c.height = H;
+      const g = c.getContext("2d", { willReadFrequently: true });
+      g.drawImage(video, 0, 0, W, H);
+      const img = g.getImageData(0, 0, W, H);
+      if (!hasPicture(g, W, H)) continue;
+      const found = findWheel(img);
+      if (found) grabs.push({ ...found, W, H });
+    }
+    const w = settleWheel(grabs);
+    if (w && grabs.length) {
+      const { W, H } = grabs[0];
+      const cal = calibrate(w);
+      /* Squared frame units: x is multiplied by width/height, y runs 0..1 over
+         the height, so one unit is the frame's height in pixels. */
+      const mmPerUnit = cal.mmPerPx * H;
+      const crankMm = curve?.spindle ? +(curve.spindle.r * mmPerUnit).toFixed(0) : null;
+      wheel = {
+        cx: +(w.cx / W).toFixed(4), cy: +(w.cy / H).toFixed(4),
+        diameter: +((2 * w.major) / H).toFixed(4),           // in frame units
+        ratio: cal.ratio, yawDeg: cal.yawDeg, coverage: +w.coverage.toFixed(2), frames: grabs.length,
+      };
+      scale = {
+        mmPerUnit: +mmPerUnit.toFixed(1), from: "wheel",
+        crankMm,
+        /* 165–175 mm covers nearly every crank sold. A crank that measures
+           outside that means the wheel or the spindle circle is wrong, and
+           neither ruler should then be trusted for centimetres. */
+        rulersAgree: crankMm != null && crankMm >= 155 && crankMm <= 185,
+      };
+    }
+  } catch { /* a report without a wheel still reports */ }
+
   onProgress(95, "Pulling the frame behind each number…");
 
   /* Candidates, not a candidate.
@@ -2043,6 +2093,13 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   /* Rule 3: past 15 degrees off square, degree claims stop being claims. The
      camera becomes the fix and every verdict word comes off — the numbers stay
      visible, but they stop pretending to be judgements. */
+  /* The wheel's yaw replaces the hip-separation guess where there is one. It
+     is a real geometric reading rather than a proxy, coarse near square but
+     unambiguous when the phone is well off. */
+  if (wheel && capture.grade !== "F") {
+    capture.offSquareDeg = wheel.yawDeg;
+    capture.squarenessFrom = "wheel";
+  }
   const provisional = capture.grade === "C";
   if (provisional) {
     fix = {
@@ -2061,6 +2118,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
 
   return {
     capture,
+    wheel, scale,
     provisional,
     track,
     trim: [t0, t1],
@@ -2183,7 +2241,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
           : foreaft.ofFemur > 0 ? "Ahead of the pedal" : "Behind the pedal",
         note: `${whyForeAft(foreaft.ofFemur, foreaft.cm)} A plus sign means your knee is ahead of the pedal axle with the cranks level. Fitters usually start with the two roughly stacked and then move the saddle to suit the rider, so this is a starting point rather than something to hit — we do not score it. Measured over ${foreaft.n} strokes.${
           foreaft.ruler === "crank"
-            ? " The centimetres come off your own pedals: your foot traces a circle as you ride, and that circle is the crank, which is 17 cm on almost every bike. Nothing here is assumed about your body."
+            ? ` The centimetres come off your own pedals: your foot traces a circle as you ride, and that circle is the crank, which is 17 cm on almost every bike. Nothing here is assumed about your body.${
+                scale?.rulersAgree ? " Your front wheel, measured separately, agrees with it." : scale ? " Your front wheel, measured separately, does not quite agree with it, so take the centimetres as rough." : ""}`
             : foreaft.cm != null
               ? " The centimetres are close rather than exact: they come from your height and from where the pedal axle normally sits under a foot, neither of which we can see in the video."
               : " Add your height on the Me screen to see this in centimetres."}`,
