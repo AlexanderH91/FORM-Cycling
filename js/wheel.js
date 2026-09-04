@@ -205,6 +205,8 @@ export function settleWheel(wheels) {
    true diameter whatever the yaw, because a circle's longest chord survives
    projection. Yaw from the axis ratio: cos(yaw) = minor / major. */
 export const WHEEL_MM = 670;
+export const YAW_RESOLVED_RATIO = 0.975;  // cos 13°; the fit reads a little rounder than the truth
+
 export function calibrate(wheel) {
   if (!wheel) return null;
   const mmPerPx = WHEEL_MM / (2 * wheel.major);
@@ -212,5 +214,10 @@ export function calibrate(wheel) {
      about five degrees of yaw. It says whether the camera is off and roughly
      how far; it is not precise enough to correct angles with on its own. */
   const yawDeg = Math.acos(Math.min(1, Math.max(0, wheel.ratio))) * 180 / Math.PI;
-  return { mmPerPx, yawDeg: +yawDeg.toFixed(0), diameterPx: 2 * wheel.major, ratio: +wheel.ratio.toFixed(3) };
+  /* Below about 18° the short axis is within 5% of the long one, which is
+     inside what blur and the fit itself move it by — so a yaw read there says
+     "near square", not a number. `resolved` is the caller's licence to quote
+     the degrees; without it the wheel can only confirm the camera was close. */
+  const resolved = wheel.ratio < YAW_RESOLVED_RATIO;
+  return { mmPerPx, yawDeg: +yawDeg.toFixed(0), resolved, diameterPx: 2 * wheel.major, ratio: +wheel.ratio.toFixed(3) };
 }

@@ -47,9 +47,10 @@ const r = await page.evaluate(async () => {
   const many = W.settleWheel([W.findWheel(scene(60, 0)), W.findWheel(scene(60, 0)), W.findWheel(scene(60, 0))]);
   const cal = W.calibrate(off);
   const nothing = W.findWheel((() => { const c = document.createElement('canvas'); c.width = 320; c.height = 240; const g = c.getContext('2d'); g.fillStyle = '#ccc'; g.fillRect(0, 0, 320, 240); return g.getImageData(0, 0, 320, 240); })());
-  return { square, off, big, many, cal, nothing };
+  return { square, off, big, many, cal, nothing, threshold: W.YAW_RESOLVED_RATIO };
 });
 
+const W_cal = (w) => ({ resolved: w.ratio < r.threshold, yawDeg: (Math.acos(Math.min(1, w.ratio)) * 180 / Math.PI).toFixed(0), threshold: r.threshold });
 T('a wheel is found in a cluttered side view, with a leg across its rim',
   r.square && Math.abs(r.square.cx - 110) < 4 && Math.abs(r.square.cy - 150) < 4,
   r.square ? `centre (${r.square.cx.toFixed(1)}, ${r.square.cy.toFixed(1)}) vs (110, 150)` : 'not found');
@@ -67,6 +68,9 @@ T('a wheel filmed 20° off-square comes back as an ellipse of the right ratio',
 /* Yaw from one ring is coarse by nature: cos is flat near zero, so a pixel
    on the minor axis is five degrees of yaw. Good enough to say "the camera is
    off" and roughly how much; not a number to correct angles with on its own. */
+T('a wheel seen 20° off square is resolved as off square', r.cal?.resolved === true, `ratio ${r.cal?.ratio}`);
+T('while a square one is not — near square the ellipse cannot say how far', r.square && !W_cal(r.square).resolved,
+  r.square ? `ratio ${r.square.ratio.toFixed(3)} reads as ${W_cal(r.square).yawDeg}°, quoted only past ${W_cal(r.square).threshold}` : 'not found');
 T('and the camera yaw is read back off it, roughly', r.cal && Math.abs(r.cal.yawDeg - 20) < 7,
   r.cal ? `${r.cal.yawDeg}° vs 20° — a pixel on the short axis is 5° of yaw` : 'no calibration');
 T('while its long axis still gives the true diameter, so scale survives the yaw',

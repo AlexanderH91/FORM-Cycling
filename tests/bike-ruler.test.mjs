@@ -20,7 +20,7 @@ const wired = await page.evaluate(async () => {
     scaleInFrameUnits: /const mmPerUnit = cal\.mmPerPx \* H;/.test(block),
     crossChecksTheCrank: /crankMm = curve\?\.spindle \? \+\(curve\.spindle\.r \* mmPerUnit\)/.test(block)
       && /rulersAgree: crankMm != null && crankMm >= 155 && crankMm <= 185/.test(block),
-    yawReplacesTheGuess: /capture\.offSquareDeg = wheel\.yawDeg;/.test(src) && /squarenessFrom = "wheel"/.test(src),
+    yawReplacesTheGuess: /capture\.offSquareDeg = wheel\.yawResolved \? wheel\.yawDeg : Math\.min\(capture\.offSquareDeg, wheel\.yawDeg\)/.test(src) && /squarenessFrom = "wheel"/.test(src),
     travelsWithTheReport: /^    wheel, scale,$/m.test(src),
     toldToTheRider: /your crank measures \$\{r\.scale\.crankMm\} mm/.test(pg)
       && /Your front wheel, measured separately, agrees with it\./.test(src),

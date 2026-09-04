@@ -2035,7 +2035,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       wheel = {
         cx: +(w.cx / W).toFixed(4), cy: +(w.cy / H).toFixed(4),
         diameter: +((2 * w.major) / H).toFixed(4),           // in frame units
-        ratio: cal.ratio, yawDeg: cal.yawDeg, coverage: +w.coverage.toFixed(2), frames: grabs.length,
+        ratio: cal.ratio, yawDeg: cal.yawDeg, yawResolved: cal.resolved, coverage: +w.coverage.toFixed(2), frames: grabs.length,
       };
       scale = {
         mmPerUnit: +mmPerUnit.toFixed(1), from: "wheel",
@@ -2178,7 +2178,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
      is a real geometric reading rather than a proxy, coarse near square but
      unambiguous when the phone is well off. */
   if (wheel && capture.grade !== "F") {
-    capture.offSquareDeg = wheel.yawDeg;
+    /* Near square the ellipse cannot tell 3° from 12°, so there the wheel may
+       only lower the body-based guess, never raise it; well off square it is
+       the better reading and replaces it. */
+    capture.offSquareDeg = wheel.yawResolved ? wheel.yawDeg : Math.min(capture.offSquareDeg, wheel.yawDeg);
     capture.squarenessFrom = "wheel";
   }
   const provisional = capture.grade === "C";
