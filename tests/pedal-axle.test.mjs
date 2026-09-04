@@ -14,7 +14,10 @@ const page = await b.newPage();
 await page.goto(`${BASE}/index.html`);
 
 const r = await page.evaluate(async () => {
-  const { pedalAxle, kneeOverAxle } = await import('/js/analysis.js');
+  const { pedalAxle, kneeOverAxle, fitCircle } = await import('/js/analysis.js');
+  let seed = 11;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const gauss = () => { let u = 0, v = 0; while (!u) u = rnd(); while (!v) v = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
 
   /* A rider pedalling. The spindle sits 0.34 of the way along the foot and
      traces a crank circle of radius 0.09; the foot rocks ±12° about it, which
@@ -38,11 +41,31 @@ const r = await page.evaluate(async () => {
 
   const found = pedalAxle(rows);
   const off = kneeOverAxle(rows, 15);
+
+  /* The same rider as the model actually sees them: every landmark jittered
+     by about half a per cent of the frame, and one frame in twelve with the
+     foot put somewhere that is not the foot — on the chainring, on the other
+     pedal. The spindle must still be found, and the circle must still be
+     the crank. */
+  const dirty = rows.map((q) => {
+    const bad = rnd() < 1 / 12;
+    const j = () => 0.004 * gauss();
+    const wild = () => (bad ? (rnd() - 0.5) * 0.25 : 0);
+    return { ...q,
+      x: { ...q.x, heel: q.x.heel + j() + wild(), toe: q.x.toe + j() + wild() },
+      fy: { heel: q.fy.heel + j() + wild(), toe: q.fy.toe + j() + wild() } };
+  });
+  const foundDirty = pedalAxle(dirty);
+  const spindlePts = dirty.map((q) => ({ x: q.x.toe + ALONG * (q.x.heel - q.x.toe), y: q.fy.toe + ALONG * (q.fy.heel - q.fy.toe) }));
+  const robust = fitCircle(spindlePts), plain = fitCircle(spindlePts, { robust: false });
   return {
     along: found?.along, crank: found?.r, fit: found?.residual,
     trueAlong: ALONG, trueCrank: CRANK,
     cm: off?.fromCrank, spindle: off?.spindle,
     // a clip where the foot never went round: no circle, no measurement
+    dirty: foundDirty ? { along: foundDirty.along, crank: foundDirty.r, fit: foundDirty.residual, dropped: foundDirty.dropped } : null,
+    robust: robust ? { r: robust.r, fit: robust.residual, dropped: robust.dropped } : null,
+    plain: plain ? { r: plain.r, fit: plain.residual } : null,
     still: pedalAxle(rows.map((q) => ({ ...q, x: { ...q.x, heel: 0.55, toe: 0.42 }, fy: { heel: 0.70, toe: 0.70 } }))),
   };
 });
@@ -64,6 +87,12 @@ T('centimetres come off the rider\'s own pedals, with no height needed',
 T('and the report keeps what it measured, to be checked later',
   r.spindle && r.spindle.along === r.along && r.spindle.crank > 0);
 
+T('with real jitter and one misread foot in twelve, the spindle is still found',
+  r.dirty && Math.abs(r.dirty.along - r.trueAlong) <= 0.08 && Math.abs(r.dirty.crank - r.trueCrank) / r.trueCrank < 0.08,
+  r.dirty ? `${(r.dirty.along * 100).toFixed(0)}% along, crank ${r.dirty.crank.toFixed(4)} vs ${r.trueCrank}, ${r.dirty.dropped} frames set aside` : 'lost the spindle');
+T('the misread frames are set aside rather than averaged in',
+  r.robust && r.plain && r.robust.fit < r.plain.fit && Math.abs(r.robust.r - r.trueCrank) <= Math.abs(r.plain.r - r.trueCrank),
+  r.robust ? `residual ${(r.robust.fit * 100).toFixed(1)}% robust vs ${(r.plain.fit * 100).toFixed(1)}% plain; radius off by ${(100 * Math.abs(r.robust.r - r.trueCrank) / r.trueCrank).toFixed(1)}% vs ${(100 * Math.abs(r.plain.r - r.trueCrank) / r.trueCrank).toFixed(1)}%` : 'no fit');
 T('a foot that never traced a circle gives no spindle at all',
   r.still === null, 'better the population figure than centimetres built on a bad fit');
 

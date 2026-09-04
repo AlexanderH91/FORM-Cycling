@@ -192,7 +192,32 @@ export function threeOClock(rows, fps) {
  * "knee offset ÷ crank radius" turns into centimetres with no rider height, no
  * population thigh proportion, and — because both are measured in the same
  * frame — no dependence on scale or on how square the camera was. */
-function fitCircle(pts) {
+/* Robust in the same way as the stroke curve: a pose model does not always
+   miss by a little, and one frame with the toe on the chainring pulls a
+   least-squares circle towards it. Fit, set aside the points implausibly far
+   from the circle judged against the points' own spread, refit — twice. If
+   more than a third of the points would go, the circle is wrong rather than
+   the points, and the plain fit stands with its honest residual. */
+export function fitCircle(pts, { robust = true } = {}) {
+  let fit = fitCircleOnce(pts);
+  if (!fit || !robust) return fit;
+  let kept = pts, dropped = 0;
+  for (let pass = 0; pass < 2; pass++) {
+    const off = kept.map(({ x, y }) => Math.abs(Math.hypot(x - fit.cx, y - fit.cy) - fit.r));
+    const mad = median(off);
+    if (!(mad > 1e-9)) break;
+    const keep = kept.filter((_, i) => off[i] <= 3.5 * 1.4826 * mad);
+    if (keep.length === kept.length) break;
+    if (keep.length < 12 || keep.length < pts.length * 0.66) break;
+    const refit = fitCircleOnce(keep);
+    if (!refit) break;
+    dropped += kept.length - keep.length;
+    kept = keep; fit = refit;
+  }
+  return { ...fit, dropped };
+}
+
+function fitCircleOnce(pts) {
   const n = pts.length;
   if (n < 12) return null;
   let Sx = 0, Sy = 0, Sxx = 0, Syy = 0, Sxy = 0, Sz = 0, Sxz = 0, Syz = 0;

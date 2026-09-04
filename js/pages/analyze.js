@@ -719,7 +719,9 @@ export function drawReport(view, r, clips) {
       r.refined.strokes
         ? `${r.refined.strokes} strokes re-read with the ${r.refined.model} model${
             r.refined.top ? `, ${r.refined.top} at the top too` : ""}${
-            r.refined.fineReads ? ` · ${r.refined.fineReads} frames looked at` : ""}`
+            r.refined.fineReads ? ` · ${r.refined.fineReads} frames looked at` : ""}${
+            Number.isFinite(r.howRead?.fineOffset?.knee?.value)
+              ? ` · the knee curve moved ${r.howRead.fineOffset.knee.value > 0 ? "+" : ""}${r.howRead.fineOffset.knee.value.toFixed(1)}° to match it` : ""}`
         : `read with the ${r.refined.sweep} model only${(r.refined.fineModelError ?? r.refined.refineError) ? ` — ${r.refined.fineModelError ?? r.refined.refineError}` : ""}`}${
       r.refined.modelLoadMs != null ? ` · model loaded in ${(r.refined.modelLoadMs / 1000).toFixed(1)}s` : ""}${
       r.refined.refineMs != null ? ` · re-read took ${(r.refined.refineMs / 1000).toFixed(1)}s` : ""}${
