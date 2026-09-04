@@ -35,8 +35,12 @@ const r = await page.evaluate(async () => {
     subframeSearch: /wantLow \? m\.ankleY > best\.ankleY : m\.ankleY < best\.ankleY/.test(src),
     refinesTop: /refine\(tdcIdx, false/.test(src),
     refinesThree: /refine\(three, true, 94, 95, REFINE_STROKES, 0\)/.test(src),
-    hipUsesRefined: /const hipTDC = tdcM\.length \? stat\(tdcM, "hip"\)/.test(src),
-    threeBeforeMeasure: src.indexOf('refine(three, true') < src.indexOf('const foreaft = kneeOverAxle'),
+    /* The one-frame read of the hip still comes from the re-read frames; the
+       curve is preferred where the clip gives one, and the peak read travels
+       beside it for comparison. */
+    hipUsesRefined: /const hipPk = tdcM\.length \? stat\(tdcM, "hip"\)/.test(src)
+      && /const hipTDC = curve\?\.hipTDC \?\? hipPk/.test(src),
+    threeBeforeMeasure: src.indexOf('refine(three, true') < src.indexOf('const foreaftPk = kneeOverAxle'),
     countsReads: /timing\.fineReads/.test(src),
   };
 });

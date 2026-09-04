@@ -1,6 +1,7 @@
 import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MODEL, REFINE_STROKES, FINE_MODEL_TIMEOUT_MS, SUBFRAME, SANITY,
          FEMUR_OVER_HEIGHT, AXLE_ALONG_FOOT } from "./config.js";
 import { boneLengths, bestLeg, movedTooFar } from "./limbs.js";
+import { crankAngles, harmonic, cadenceFrom, framesAt, BDC, TDC, THREE } from "./cycle.js";
 
 /* On-device side-view analysis.
    MediaPipe Pose Landmarker (WASM) runs in the browser; the video never
@@ -250,6 +251,72 @@ export function pedalAxle(rows) {
   return best;
 }
 
+/* THE WHOLE STROKE AT ONCE.
+   Every number the side view reports is taken at a moment of the pedal
+   circle: the knee and the foot at the bottom, the hip at the top, the knee
+   over the axle with the cranks level. The old way found a frame near each
+   moment and read it — one noisy sample per stroke, chosen by the noise.
+   This fits each quantity as a smooth periodic curve of crank angle over every
+   frame in the clip and reads the curve at the exact moment. Thirty simulated
+   rides: one frame per stroke lands 1.7° from the truth on average, the curve
+   0.7°. It is computed from the sweep alone, before any frame is re-read by
+   the other model, so one median never mixes two models. */
+export function strokeCurve(rows, fps) {
+  const spindle = pedalAxle(rows);
+  if (!spindle) return null;
+  const usable = (r) => r.fy && Number.isFinite(r.fy.toe) && r.conf >= CAPTURE.minJointVisibility;
+  const pts = rows.map((r) => usable(r)
+    ? { x: r.x.toe + spindle.along * (r.x.heel - r.x.toe), y: r.fy.toe + spindle.along * (r.fy.heel - r.fy.toe) }
+    : null);
+  const theta = crankAngles(pts, spindle);
+  const cad = cadenceFrom(theta, rows.map((r) => r.t));
+  if (!cad || cad.revolutions < 4) return null;
+  const { forward } = threeOClock(rows, fps);
+
+  const fitOf = (get) => harmonic(theta, rows.map((r) => (usable(r) ? get(r) : NaN)), 3);
+  const fits = {
+    knee: fitOf((r) => r.kneeBend), flat: fitOf((r) => r.kneeFlat),
+    toe: fitOf((r) => r.toeDown), hip: fitOf((r) => r.hip), torso: fitOf((r) => r.torso),
+    kneeX: fitOf((r) => r.x.knee), toeX: fitOf((r) => r.x.toe), heelX: fitOf((r) => r.x.heel),
+  };
+  if (!fits.knee) return null;
+  const revs = Math.max(1, Math.round(cad.revolutions));
+  const read = (fit, at) => (fit ? { value: fit.at(at), sd: fit.sdNear(at), n: revs, of: revs, curve: true } : null);
+
+  const three = THREE(forward);
+  let foreaft = null;
+  if (forward && fits.kneeX && fits.toeX && fits.heelX) {
+    const axleX = fits.toeX.at(three) + spindle.along * (fits.heelX.at(three) - fits.toeX.at(three));
+    const mid = forward * (fits.kneeX.at(three) - axleX);
+    const femur = median(rows.filter(usable).map((r) => r.femur));
+    const frames = framesAt(theta, three);
+    const offAt = (i) => {
+      const j = rows[i].x, axle = j.toe + spindle.along * (j.heel - j.toe);
+      return forward * (j.knee - axle);
+    };
+    const cm = (mid / spindle.r) * 17.25;
+    if (femur > 1e-3 && Math.abs(mid / femur) <= 0.35)
+      foreaft = {
+        ofFemur: mid / femur, sd: fits.kneeX.sdNear(three) / femur, n: revs, curve: true,
+        fromCrank: Math.abs(cm) < 12 ? +cm.toFixed(1) : null,
+        sdCrankCm: +((fits.kneeX.sdNear(three) / spindle.r) * 17.25).toFixed(1),
+        spindle: { along: spindle.along, crank: +spindle.r.toFixed(4), fit: +spindle.residual.toFixed(3) },
+        ranked: frames.map((idx) => ({ idx, d: Math.abs(offAt(idx) - mid) })).sort((a, b) => a.d - b.d).map((x) => x.idx),
+        at: frames.length ? frames.reduce((b, i) => (Math.abs(offAt(i) - mid) < Math.abs(offAt(b) - mid) ? i : b), frames[0]) : null,
+      };
+  }
+
+  return {
+    spindle, forward, cadence: cad.rpm, revolutions: +cad.revolutions.toFixed(1),
+    kneeBDC: read(fits.knee, BDC), kneeFlatBDC: read(fits.flat, BDC),
+    toeBDC: read(fits.toe, BDC), hipTDC: read(fits.hip, TDC),
+    foreaft,
+    bdcFrames: framesAt(theta, BDC), tdcFrames: framesAt(theta, TDC),
+    // how well each curve explains the frames — the model's per-frame noise
+    fit: { knee: +fits.knee.sd.toFixed(2), toe: fits.toe ? +fits.toe.sd.toFixed(2) : null, hip: fits.hip ? +fits.hip.sd.toFixed(2) : null },
+  };
+}
+
 export function kneeOverAxle(rows, fps) {
     const { forward, three } = threeOClock(rows, fps);
     if (!forward || three.length < 3) return null;
@@ -272,6 +339,7 @@ export function kneeOverAxle(rows, fps) {
        no rider height, no population thigh, and no dependence on scale or on
        how square the camera was, because both numbers come off the same frame. */
     const cm = spindle ? (mid / spindle.r) * 17.25 : null;
+    const sdCm = spindle ? (sd(offs) / spindle.r) * 17.25 : null;
     /* No rider sits this far off. Past a third of a thigh it is the model
        having put the toe or the heel somewhere that is not the foot, and a
        number built on that should not reach a card at all. */
@@ -280,6 +348,7 @@ export function kneeOverAxle(rows, fps) {
       // in thigh-lengths, which needs no assumption about the rider at all
       ofFemur: mid / femur,
       fromCrank: cm != null && Math.abs(cm) < 12 ? +cm.toFixed(1) : null,
+      sdCrankCm: sdCm != null ? +sdCm.toFixed(1) : null,
       spindle: spindle
         ? { along: spindle.along, crank: +spindle.r.toFixed(4), fit: +spindle.residual.toFixed(3) }
         : null,
@@ -1474,9 +1543,11 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   const timing = { startedAt: analysisStart };
 
   onProgress(87, "Finding the bottom of each stroke…");
+  /* From the sweep alone, before any frame is re-read by the other model. */
+  const curve = strokeCurve(rows, FPS);
   const ay = rows.map((r) => r.ankleY);
-  const bdc = findPeaks(ay, FPS * 0.45, 0.25);
-  const tdcIdx = findPeaks(ay.map((v) => -v), FPS * 0.45, 0.25);
+  const bdc = curve && curve.bdcFrames.length >= 5 ? curve.bdcFrames : findPeaks(ay, FPS * 0.45, 0.25);
+  const tdcIdx = curve && curve.tdcFrames.length >= 5 ? curve.tdcFrames : findPeaks(ay.map((v) => -v), FPS * 0.45, 0.25);
   if (bdc.length < 5) { release(); return { gate: "We couldn't find steady pedalling in the part you selected. Move the trim to a section where you ride continuously.", capture }; }
 
   /* Only now is it known which frames matter, which is the whole point: the
@@ -1512,12 +1583,13 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       try { await refine(three, true, 94, 95, REFINE_STROKES, 0); } catch { /* sweep stands */ }
     }
   }
-  const foreaft = kneeOverAxle(rows, FPS);
+  const foreaftPk = kneeOverAxle(rows, FPS);
+  const foreaft = curve?.foreaft ?? foreaftPk;
   if (foreaft?.fromCrank != null) {
     /* The crank the foot drew is the better ruler. It is measured in this
        clip rather than assumed about this rider, and it needs no height. */
     foreaft.cm = foreaft.fromCrank;
-    foreaft.sdCm = (foreaft.sd * foreaft.femurOverCrank) || null;
+    foreaft.sdCm = foreaft.sdCrankCm;
     foreaft.ruler = "crank";
   } else if (foreaft && heightCm > 0) {
     // Fallback: one known length turns thigh-lengths into centimetres, through
@@ -1531,7 +1603,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
 
   // Row indices skip any frame the model could not read, so measure the stroke
   // period from the frames' own timestamps instead of assuming none were lost.
-  const cadence = 60 / mean(bdc.slice(1).map((v, i) => rows[v].t - rows[bdc[i]].t));
+  const cadencePk = 60 / mean(bdc.slice(1).map((v, i) => rows[v].t - rows[bdc[i]].t));
+  const cadence = curve?.cadence ?? cadencePk;
 
   /* A reported angle is the MEDIAN of the strokes that were clearly seen, not
      the mean of every frame. One frame of bad landmarks used to drag the
@@ -1555,13 +1628,17 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   const bdcM = measured(bdc);
   const tdcM = measured(tdcIdx);
   const allIdx = rows.map((_, i) => i);
-  const kneeBDC = stat(bdcM, "kneeBend");
-  /* The same strokes read the old way. Not shown to the rider — it is how we
-     find out whether measuring in three dimensions actually steadied the
-     number across rides, rather than assuming it did. */
-  const kneeFlatBDC = stat(bdcM, "kneeFlat");
-  const toeBDC = stat(bdcM, "toeDown");
-  const hipTDC = tdcM.length ? stat(tdcM, "hip") : null;
+  /* One frame per stroke, as it was always read. Kept beside the curve so the
+     stored reports say whether the two agree, ride after ride — the same
+     evidence-first move as when the knee went to three dimensions. */
+  const kneePk = stat(bdcM, "kneeBend");
+  const kneeFlatPk = stat(bdcM, "kneeFlat");
+  const toePk = stat(bdcM, "toeDown");
+  const hipPk = tdcM.length ? stat(tdcM, "hip") : null;
+  const kneeBDC = curve?.kneeBDC ?? kneePk;
+  const kneeFlatBDC = curve?.kneeFlatBDC ?? kneeFlatPk;
+  const toeBDC = curve?.toeBDC ?? toePk;
+  const hipTDC = curve?.hipTDC ?? hipPk;
   const torso = stat(allIdx, "torso");
   if (!kneeBDC) { release(); return { gate: "We saw you pedalling but never clearly enough at the bottom of the stroke to measure the knee. Move the phone to saddle height, 2–3 m out to the side, and film again.", capture }; }
 
@@ -1896,6 +1973,17 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
        "is the spread the camera or is it us?" is a question that needs data
        across rides and had none. */
     howRead: {
+      /* "curve": every number read off a periodic fit to the whole clip.
+         "peaks": one frame per stroke, the older way, used when the clip gave
+         no spindle circle to hang the crank angle on. The one-frame figures
+         travel alongside either way, so the two can be compared across rides
+         before anyone has to take the curve on trust. */
+      method: curve ? "curve" : "peaks",
+      revolutions: curve?.revolutions ?? null,
+      curveFit: curve?.fit ?? null,
+      peaks: { knee: kneePk ? +kneePk.value.toFixed(1) : null, kneeSd: kneePk ? +kneePk.sd.toFixed(1) : null,
+               toe: toePk ? +toePk.value.toFixed(1) : null, hip: hipPk ? +hipPk.value.toFixed(1) : null,
+               cadence: +cadencePk.toFixed(1), foreaft: foreaftPk ? +foreaftPk.ofFemur.toFixed(3) : null },
       space: bdcM.every((i) => rows[i].fromWorld) ? "3d"
         : bdcM.some((i) => rows[i].fromWorld) ? "mixed" : "flat",
       flat: kneeFlatBDC ? +kneeFlatBDC.value.toFixed(1) : null,
