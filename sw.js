@@ -8,7 +8,7 @@
 
 /* Bumped with the app version: activate() deletes every cache that is not this
    one, so a rename is also a purge of whatever the previous version stored. */
-const CACHE = "form-cycling-v44";
+const CACHE = "form-cycling-v45";
 
 self.addEventListener("install", () => self.skipWaiting());
 

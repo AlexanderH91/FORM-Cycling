@@ -256,6 +256,16 @@ function fitCircleOnce(pts) {
   return { cx, cy, r, residual: median(off) / r, n };
 }
 
+/* How far off a circle the foot's path may sit, as a share of the radius,
+   before the circle is not believed. This is the median distance of the
+   points from the circle — per-point landmark noise, not the error of the
+   circle: with two hundred points the centre and radius are known to a small
+   fraction of it. The first real ride read by the accurate model came back
+   at 0.143 over 214 frames and lost its curve to a threshold of 0.12, which
+   was set by a synthetic rider with no noise at all. A foot that never went
+   round is caught separately, by the spread of its path. */
+export const AXLE_FIT_MAX_RESIDUAL = 0.25;
+
 export function pedalAxle(rows, diag = {}) {
   const usable = rows.filter((r) => r.fy && Number.isFinite(r.fy.toe) && Number.isFinite(r.fy.heel)
     && r.conf >= CAPTURE.minJointVisibility);
@@ -277,7 +287,7 @@ export function pedalAxle(rows, diag = {}) {
   /* What the best circle looked like, whether or not it was good enough —
      so a ride whose curve fell back to one-frame reads says how close it came. */
   if (best) { diag.residual = +best.residual.toFixed(3); diag.along = best.along; diag.crank = +best.r.toFixed(4); }
-  if (!best || best.residual > 0.12) return null;
+  if (!best || best.residual > AXLE_FIT_MAX_RESIDUAL) return null;
   return best;
 }
 
@@ -460,7 +470,7 @@ export function strokeCurve(rows, fps, diag = {}) {
     const cm = (mid / spindle.r) * 17.25;
     if (femur > 1e-3 && Math.abs(mid / femur) <= 0.35)
       foreaft = {
-        ofFemur: mid / femur, sd: fits.kneeX.sdNear(three) / femur, n: revs, curve: true,
+        ofFemur: mid / femur, units: mid, sd: fits.kneeX.sdNear(three) / femur, n: revs, curve: true,
         fromCrank: Math.abs(cm) < 12 ? +cm.toFixed(1) : null,
         sdCrankCm: +((fits.kneeX.sdNear(three) / spindle.r) * 17.25).toFixed(1),
         spindle: { along: spindle.along, crank: +spindle.r.toFixed(4), fit: +spindle.residual.toFixed(3) },
@@ -511,7 +521,7 @@ export function kneeOverAxle(rows, fps) {
     if (Math.abs(mid / femur) > 0.35) return null;
     return {
       // in thigh-lengths, which needs no assumption about the rider at all
-      ofFemur: mid / femur,
+      ofFemur: mid / femur, units: mid,
       fromCrank: cm != null && Math.abs(cm) < 12 ? +cm.toFixed(1) : null,
       sdCrankCm: sdCm != null ? +sdCm.toFixed(1) : null,
       spindle: spindle
@@ -659,7 +669,24 @@ export function kneeReadOf(report) {
      different way. An angle read off the flat picture and an angle
      reconstructed in three dimensions are not the same quantity. */
   return { value, sd: k.sd ?? 0, n: k.strokes ?? 1, se: Number.isFinite(k.se) ? k.se : undefined,
-           era: report?.howRead ? ERA : "flat" };
+           era: eraOf(report) };
+}
+
+/* Which way a stored knee was measured.
+   "flat"  — off the picture plane, before the metric pose.
+   "3d"    — the metric pose, read by the small sweep model only.
+   "heavy" — calibrated to the accurate model: either its own one-frame reads
+             or the curve shifted by the measured gap between the two models.
+   The first ride the accurate model actually ran on read 24.7° where the
+   sweep model had been reading 32–34° on the same rider and bike: the two
+   models' metric poses differ by about eight degrees at the knee. That is
+   our change, not the rider's, so those rides are history to each other. */
+export function eraOf(report) {
+  if (!report?.howRead) return "flat";
+  const k = report.kneeBendBDC ?? {};
+  const heavy = k.corrected != null
+    || (report.howRead.method !== "curve" && (report.refined?.strokes ?? 0) >= 5);
+  return heavy ? ERA : "3d";
 }
 
 /* WHICH RIDES CAN BE COMPARED WITH EACH OTHER.
@@ -674,11 +701,15 @@ export function kneeReadOf(report) {
    as instability in their riding, and it was blocking an answer they had
    already earned. When the way we measure changes, everything before it is
    history: keep it on the chart, keep it out of the average. */
-const ERA = "3d";
+const ERA = "heavy";
+const ERAS = ["heavy", "3d"];         // newest way of measuring first
 export function comparable(reads) {
   const list = (reads ?? []).filter(Boolean);
-  const now = list.filter((r) => r.era === ERA);
-  return now.length ? now : list;      // nothing current yet: the old set stands
+  for (const era of ERAS) {
+    const now = list.filter((r) => r.era === era);
+    if (now.length) return now;        // the newest era with any rides in it
+  }
+  return list;                         // nothing but the oldest: it stands
 }
 
 export function pool(reads) {
@@ -1885,7 +1916,8 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   /* This ride, plus the earlier ones measured the same way. Home and the report
      were reading different sets and reaching different conclusions on the same
      day — one saying "saddle height holds up", the other "we can't call it". */
-  const pooled = pool(comparable([{ value: kneeBDC.value, sd: kneeBDC.sd, n: kneeBDC.n, era: ERA }, ...history]));
+  const thisEra = (kneeBDC.corrected != null || (!curve && refined >= 5)) ? ERA : "3d";
+  const pooled = pool(comparable([{ value: kneeBDC.value, sd: kneeBDC.sd, n: kneeBDC.n, se: kneeBDC.se ?? undefined, era: thisEra }, ...history]));
   const pooledVerdict = verdictWith(pooled.value, pooled.u, BANDS.kneeBendBDC);
   const pv = pooled.value.toFixed(0);
   const edgeSide = pooled.value < kLo ? "below" : pooled.value > kHi ? "above" : null;
@@ -2092,6 +2124,17 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       };
     }
   } catch { /* a report without a wheel still reports */ }
+
+  /* The wheel is the better ruler for centimetres. Its 670 mm is known to a
+     couple of per cent whatever the bike; the crank's radius is read off a
+     noisy foot and on the first real ride came out 17 % short. So where the
+     wheel was found, the knee's offset from the pedal axle is converted by it,
+     and the crank stays as the cross-check the footnote reports. */
+  if (scale && foreaft && Number.isFinite(foreaft.units)) {
+    foreaft.cm = +((foreaft.units * scale.mmPerUnit) / 10).toFixed(1);
+    if (Number.isFinite(foreaft.sd)) foreaft.sdCm = +((foreaft.sd * (foreaft.units / (foreaft.ofFemur || 1)) * scale.mmPerUnit) / 10).toFixed(1);
+    foreaft.ruler = "wheel";
+  }
 
   onProgress(95, "Pulling the frame behind each number…");
 
@@ -2374,7 +2417,10 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
           : Math.abs(foreaft.ofFemur) < 0.07 ? "Over the pedal"
           : foreaft.ofFemur > 0 ? "Ahead of the pedal" : "Behind the pedal",
         note: `${whyForeAft(foreaft.ofFemur, foreaft.cm)} A plus sign means your knee is ahead of the pedal axle with the cranks level. Fitters usually start with the two roughly stacked and then move the saddle to suit the rider, so this is a starting point rather than something to hit — we do not score it. Measured over ${foreaft.n} strokes.${
-          foreaft.ruler === "crank"
+          foreaft.ruler === "wheel"
+            ? ` The centimetres are scaled off your own front wheel, which is 67 cm on almost every road bike — nothing here is assumed about your body.${
+                scale?.crankMm != null && !scale.rulersAgree ? " The circle your foot traced measured differently, so take them as close rather than exact." : ""}`
+            : foreaft.ruler === "crank"
             ? ` The centimetres come off your own pedals: your foot traces a circle as you ride, and that circle is the crank, which is 17 cm on almost every bike. Nothing here is assumed about your body.${
                 scale?.rulersAgree ? " Your front wheel, measured separately, agrees with it." : scale ? " Your front wheel, measured separately, does not quite agree with it, so take the centimetres as rough." : ""}`
             : foreaft.cm != null
