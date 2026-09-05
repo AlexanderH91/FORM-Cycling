@@ -1119,6 +1119,8 @@ export function overlayAt(track, t, tol = 0.12) {
    without a video in front of it. */
 const FRONT_FPS = 12;
 const LEGS = ["l", "r"];
+/* Where a leg's ends may sit, in shoulder-widths — the front view's own ruler. */
+export const FRONT_BODY = { hipBelowShoulders: 0.5, ankleBelowHip: 0.7, hipOutsideShoulders: 0.3 };
 
 /* One frame's two legs, in squared coordinates.
    `clean` — the model's own reading is anatomically possible: a seated
@@ -1147,8 +1149,26 @@ export function frontLegs(p, sq) {
        sixth. Scale-free, so it holds whether the rider fills the frame or
        stands six metres back. */
     const body = p[a].y - belowShoulders;
+    /* And against a length that is NOT part of the leg being judged. The check
+       above measures the hip against the shoulder-to-ankle span, so a whole
+       leg shrunk onto the torso — "hip" on the sternum, "knee" on a forearm,
+       "ankle" on the real knee — passes it in perfect proportion, and the app
+       drew exactly that on a rider's chest. The shoulders are the one width
+       the front view always shows clearly. A seated torso, even folded well
+       forward, drops at least half a shoulder-width from shoulder to hip;
+       the ankle sits at least most of one below the hip even at the top of
+       the stroke; and both hips lie between the shoulders. */
+    const shouldersSeen = vis(11) && vis(12);
+    const sL = sq(p[11]), sR = sq(p[12]);
+    const w = shouldersSeen ? Math.abs(sL.x - sR.x) : 0;
+    const hipX = sq(p[h]).x;
+    const onTorso = !shouldersSeen || w < 1e-3 || (
+      (p[h].y - belowShoulders) >= FRONT_BODY.hipBelowShoulders * w
+      && (p[a].y - p[h].y) >= FRONT_BODY.ankleBelowHip * w
+      && hipX >= Math.min(sL.x, sR.x) - FRONT_BODY.hipOutsideShoulders * w
+      && hipX <= Math.max(sL.x, sR.x) + FRONT_BODY.hipOutsideShoulders * w);
     const ends = vis(h) && vis(a) && p[a].y > p[h].y
-      && body > 0 && (p[h].y - belowShoulders) > 0.15 * body;
+      && body > 0 && (p[h].y - belowShoulders) > 0.15 * body && onTorso;
     return {
       hip: sq(p[h]), knee: sq(p[k]), ankle: sq(p[a]), ends,
       clean: ends && vis(k) && p[k].y > p[h].y && p[a].y > p[k].y,

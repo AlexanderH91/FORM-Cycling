@@ -123,11 +123,11 @@ T('a lone leg on a portrait clip is credited to the right side of the body',
 const onTheBody = await page.evaluate(async () => {
   const { frontLegs, squareUp } = await import('/js/analysis.js');
   const sq = squareUp(1080 / 1920);
-  const marks = (hipY, kneeY, ankleY, shoulderY = 0.30) => {
+  const marks = (hipY, kneeY, ankleY, shoulderY = 0.30, hipX = 0.46) => {
     const p = Array.from({ length: 33 }, () => ({ x: 0.5, y: 0.5, visibility: 0.99 }));
     p[11] = { x: 0.42, y: shoulderY, visibility: 0.99 };
     p[12] = { x: 0.58, y: shoulderY, visibility: 0.99 };
-    p[23] = { x: 0.46, y: hipY, visibility: 0.99 };
+    p[23] = { x: hipX, y: hipY, visibility: 0.99 };
     p[25] = { x: 0.46, y: kneeY, visibility: 0.99 };
     p[27] = { x: 0.46, y: ankleY, visibility: 0.99 };
     return p;
@@ -138,6 +138,11 @@ const onTheBody = await page.evaluate(async () => {
     onTheArm:  leg(0.31, 0.34, 0.47),          // "hip" at the shoulder, "ankle" at the hand
     hipAtShoulder: leg(0.30, 0.50, 0.70),      // level with the shoulders exactly
     farBack:   leg(0.62, 0.68, 0.74, 0.55),    // a small rider six metres away
+    /* v43 on a real rider: "hip" on the sternum, "knee" on a forearm, "ankle"
+       on the actual knee — a whole leg shrunk onto the torso, in proportion,
+       so the span check passed it. Shoulders 16% of the frame apart. */
+    onTheTorso: leg(0.33, 0.35, 0.42),
+    hipOffToTheSide: leg(0.55, 0.72, 0.90, 0.30, 0.25),   // a "hip" out on the arm
   };
 });
 T('a real leg still passes', onTheBody.real.ends && onTheBody.real.clean);
@@ -146,6 +151,9 @@ T('a "leg" drawn across the arm is refused before the geometry ever sees it',
   'ends false means bestLeg is never asked, so nothing is reconstructed there');
 T('and a hip cannot sit level with the shoulders either',
   !onTheBody.hipAtShoulder.ends, 'a hip is below both of them, always, on a bike');
+T('a whole leg shrunk onto the torso is refused, however well proportioned',
+  !onTheBody.onTheTorso.ends, 'the shoulders are a ruler the leg being judged cannot shrink');
+T('and a hip out beside the shoulders is not a hip', !onTheBody.hipOffToTheSide.ends);
 T('while a rider standing well back still reads as a rider',
   onTheBody.farBack.ends && onTheBody.farBack.clean,
   'the check is against the body\'s own height in frame, not a fixed distance');
