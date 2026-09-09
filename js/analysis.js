@@ -3,6 +3,7 @@ import { BANDS, CAPTURE, ANGLE_FLOOR_DEG, VERDICT_SIGMAS, SETTLE_RIDES, POSE_MOD
 import { boneLengths, bestLeg, movedTooFar } from "./limbs.js";
 import { crankAngles, harmonic, bootstrapAt, cadenceFrom, framesAt, BDC, TDC, THREE } from "./cycle.js";
 import { findWheel, settleWheel, calibrate, WHEEL_MM } from "./wheel.js";
+import { targetBend, saddleShift, ghostSide } from "./ghost.js";
 
 /* On-device side-view analysis.
    MediaPipe Pose Landmarker (WASM) runs in the browser; the video never
@@ -129,8 +130,8 @@ const IN_BAND = "#34D27B", OUT_OF_BAND = "#F2C230";
 
 // The camera sees one side of the rider; take whichever is more visible.
 const SIDES = {
-  L: (p) => ({ hip: p[23], knee: p[25], ankle: p[27], sho: p[11], heel: p[29], toe: p[31] }),
-  R: (p) => ({ hip: p[24], knee: p[26], ankle: p[28], sho: p[12], heel: p[30], toe: p[32] }),
+  L: (p) => ({ hip: p[23], knee: p[25], ankle: p[27], sho: p[11], heel: p[29], toe: p[31], elbow: p[13], wrist: p[15], ear: p[7] }),
+  R: (p) => ({ hip: p[24], knee: p[26], ankle: p[28], sho: p[12], heel: p[30], toe: p[32], elbow: p[14], wrist: p[16], ear: p[8] }),
 };
 const sideVis = (j) => mean([j.hip, j.knee, j.ankle].map((q) => q.visibility ?? 1));
 
@@ -618,6 +619,33 @@ function tag(ctx, text, at, colour, w, h) {
 }
 
 const SEEN = (pt) => (pt?.visibility ?? 1) > 0.5;
+/* The upper body a row carries for the green figure, only where it was seen:
+   an elbow drawn from a guess is an arm drawn on the bars. */
+function upper(raw) {
+  const out = {};
+  for (const k of ["elbow", "wrist", "ear"])
+    if (SEEN(raw[k])) out[k] = { x: +raw[k].x.toFixed(4), y: +raw[k].y.toFixed(4) };
+  return out;
+}
+
+/* The figure on a still: a soft wide body under a crisp core, drawn before the
+   rider's own lines so the rider stays on top. */
+function figure(ctx, pts, w, h, head) {
+  const lw = Math.max(3, w * 0.006);
+  const path = () => {
+    ctx.beginPath();
+    pts.forEach((pt, i) => (i ? ctx.lineTo(pt.x * w, pt.y * h) : ctx.moveTo(pt.x * w, pt.y * h)));
+  };
+  ctx.save();
+  ctx.lineJoin = ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(52,210,123,.30)"; ctx.lineWidth = lw * 5.2; path(); ctx.stroke();
+  ctx.strokeStyle = "rgba(52,210,123,.95)"; ctx.lineWidth = lw * 0.9; path(); ctx.stroke();
+  if (head) {
+    ctx.fillStyle = "rgba(52,210,123,.30)"; ctx.beginPath();
+    ctx.arc(head.x * w, head.y * h, lw * 4.2, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
 
 /* ---- How sure are we, really? --------------------------------------------
 
@@ -1638,7 +1666,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
       const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
       rows.push({
         t: f.t,                            // frames the model missed leave gaps; keep real time
-        j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
+        j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho), ...upper(raw) },
         // How well the model saw the joints this frame's angles are built from.
         conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
         /* Measured in three dimensions where it can be, so the number does
@@ -1680,7 +1708,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     const xy = (j) => ({ x: +j.x.toFixed(4), y: +j.y.toFixed(4) });
     return {
       t,
-      j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho) },
+      j: { hip: xy(raw.hip), knee: xy(raw.knee), ankle: xy(raw.ankle), sho: xy(raw.sho), ...upper(raw) },
       conf: mean([raw.hip, raw.knee, raw.ankle, raw.sho].map((j) => j.visibility ?? 1)),
       kneeBend: kneeFromWorld(w, side) ?? (180 - angleAt(hip, knee, ankle)),
       kneeFlat: 180 - angleAt(hip, knee, ankle),
@@ -2148,20 +2176,60 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
     [...idxs].sort((a, b) => Math.abs(rows[a][key] - target) - Math.abs(rows[b][key] - target));
 
   const kneeColour = pooledVerdict === "ok" ? IN_BAND : OUT_OF_BAND;
+
   const kneeRanked = rankedBy(bdcM, "kneeBend", kneeBDC.value);
   const kneeRow = kneeRanked[0];
+
+  /* THE GREEN FIGURE. Where the numbers would put this rider: their own leg
+     with the saddle moved by exactly what the pooled read asks for, and not
+     moved at all when it asks for nothing. The shift is fixed in the frame
+     the knee card shows, then carried into every frame of the player, where
+     the knee is re-solved for that frame's own bone lengths. */
+  const ghostTarget = targetBend(pooled.value, pooledVerdict, BANDS.kneeBendBDC);
+  const ghostRow = rows[kneeRanked[0]];
+  let ghost = null;
+  {
+    const shift = ghostTarget != null && ghostRow?.j
+      ? saddleShift(ghostRow.j, video.videoWidth / video.videoHeight, ghostTarget - kneeBDC.value)
+      : null;
+    const units = shift?.units ?? 0;
+    const mm = !shift ? null
+      : scale ? Math.abs(units) * scale.mmPerUnit
+      : curve?.spindle ? (Math.abs(units) / curve.spindle.r) * 172.5
+      : heightCm > 0 && ghostRow.femur > 1e-3 ? (Math.abs(units) / ghostRow.femur) * FEMUR_OVER_HEIGHT * heightCm * 10
+      : null;
+    ghost = {
+      side: {
+        target: ghostTarget, from: +kneeBDC.value.toFixed(1),
+        shift: shift?.shift ?? null, units: +units.toFixed(4),
+        direction: shift?.direction ?? null,
+        mm: mm != null ? Math.round(mm) : null,
+        ruler: !shift ? null : scale ? "wheel" : curve?.spindle ? "crank" : heightCm > 0 ? "height" : null,
+      },
+      front: true, rear: true,
+    };
+  }
   const specs = [
     {
       key: "knee", row: kneeRow, tries: kneeRanked,
       caption: `Knee ${rows[kneeRow].kneeBend.toFixed(0)}\u00b0 on this stroke. The card's ${k}\u00b0 is the middle of ${kneeBDC.n} strokes like it.${
+        ghost?.side?.shift
+          ? ` The green figure is you with the saddle ${ghost.side.mm != null ? `about ${ghost.side.mm} mm ` : "a little "}${ghost.side.direction === "down" ? "lower" : "higher"}: same leg, same pedal, knee at ${ghost.side.target}\u00b0.`
+          : ""}${
         rows[kneeRow].fromWorld && Math.abs(rows[kneeRow].kneeBend - rows[kneeRow].kneeFlat) >= 3
           ? ` The lines are drawn flat on the video, so they look like ${rows[kneeRow].kneeFlat.toFixed(0)}\u00b0 — the difference is your phone's angle, which the measurement sees past and a flat picture cannot.`
           : ""}`,
       draw: (ctx, j, w, h) => {
         if (!SEEN(j.hip) || !SEEN(j.knee) || !SEEN(j.ankle)) return false;
+        const g = ghost?.side?.shift ? ghostSide(j, w / h, ghost.side.shift) : null;
+        if (g) {
+          const body = [g.wrist, g.elbow, g.sho, g.hip, g.knee, g.ankle].filter(Boolean);
+          figure(ctx, body.length >= 3 ? body : [g.hip, g.knee, g.ankle], w, h, g.ear);
+        }
         limb(ctx, [j.hip, j.knee, j.ankle], kneeColour, w, h);
         tag(ctx, `${rows[kneeRow].kneeBend.toFixed(0)}\u00b0`, j.knee, kneeColour, w, h);
-        return [j.hip, j.knee, j.ankle];
+        if (g) tag(ctx, `${ghost.side.target}\u00b0`, { x: g.knee.x, y: g.knee.y + (g.knee.y > j.knee.y ? 0.05 : -0.05) }, IN_BAND, w, h);
+        return [j.hip, j.knee, j.ankle, ...(g ? [g.hip, g.knee] : [])];
       },
     },
   ];
@@ -2291,6 +2359,7 @@ export async function analyzeSideClip(blob, [t0, t1], onProgress, opts = {}) {
   return {
     capture,
     wheel, scale,
+    ghost,
     provisional,
     track,
     trim: [t0, t1],

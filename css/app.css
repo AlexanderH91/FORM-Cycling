@@ -453,3 +453,6 @@ video.preview{width:100%;border-radius:16px;background:#000;display:block}
 .nextup p{margin:0 0 6px;font-size:14px;color:var(--muted);line-height:1.5}
 .nextup .nexthow{color:var(--ink);font-size:13.5px}
 .nextup .btn{margin-top:10px}
+
+/* The green figure's toggle wears the figure's own colour, not the gold of the rider's lines. */
+#mvghost.on{color:#34D27B;border-color:rgba(52,210,123,.45);background:rgba(52,210,123,.10)}

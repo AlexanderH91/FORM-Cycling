@@ -140,7 +140,7 @@ const player = await page.evaluate(async () => {
 T('the player offers all three angles', player.tabs.join(',') === 'Side,Front,Behind', player.tabs.join(' · '));
 T('switching angle loads that clip', player.clipChanged && player.activeAfterSwitch);
 T('and says what that angle is showing you', /plumb line/.test(player.capChanged), `"${player.capChanged.slice(0, 46)}…"`);
-T('lines, save and coach sit on the player', player.tools.join(',') === 'Lines,Save frame,Coach', player.tools.join(' · '));
+T('lines, the figure, save and coach sit on the player', player.tools.join(',') === 'Lines,Figure,Save frame,Coach', player.tools.join(' · '));
 T('the tools are thumb-sized', player.toolTargets);
 T('lines can be turned off to see the rider underneath', player.linesTogglable);
 // Video-derived joint positions never leave the phone — for every view.

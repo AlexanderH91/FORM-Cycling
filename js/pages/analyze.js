@@ -1,6 +1,7 @@
 import { supa } from "../supa.js";
 import { MAX_RECORD_MS, BUILD } from "../config.js";
 import { analyzeSideClip, analyzeFrontClip, analyzeRearClip, overlayAt, kneeReadOf, whyFront, whyRock } from "../analysis.js";
+import { ghostSide, ghostFront, ghostRear } from "../ghost.js";
 import { go } from "../main.js";
 import { appbar } from "../ui.js";
 
@@ -640,6 +641,7 @@ export function drawReport(view, r, clips) {
         </div>
         <div class="mv-tools">
           <button id="mvlines" class="tool on"><span class="tico">◠</span>Lines</button>
+          <button id="mvghost" class="tool on"><span class="tico">◉</span>Figure</button>
           <button id="mvsave" class="tool"><span class="tico">↓</span>Save frame</button>
           <a href="#/coach?about=report" class="tool"><span class="tico cmic"></span>Coach</a>
         </div>
@@ -785,6 +787,19 @@ const ANGLE_VIEWS = {
     trim: (r) => r.trim,
     readout: (f) => (typeof f.knee === "number" ? `${f.knee.toFixed(0)}°` : "–"),
     colour: (f) => (f.inBand ? IN_BAND : OUT),
+    /* The green figure: this rider with the saddle moved by what the read asks
+       for. A figure that asks for nothing sits on top of the rider. */
+    ghost: (r) => r.ghost?.side?.shift ?? null,
+    ghostLabel: (r) => (r.ghost?.side?.shift
+      ? `The green figure is you with the saddle ${r.ghost.side.mm != null ? `about ${r.ghost.side.mm} mm ` : "a little "}${r.ghost.side.direction === "down" ? "lower" : "higher"} — same leg, same pedal, knee at ${r.ghost.side.target}° at the bottom.`
+      : "The green figure is where the numbers put you, and it sits on top of you: nothing to move."),
+    drawGhost(ctx, f, at, lw, r, ar) {
+      const g = ghostSide(f.j, ar, r.ghost?.side?.shift ?? { x: 0, y: 0 });
+      if (!g) return;
+      const body = [g.wrist, g.elbow, g.sho, g.hip, g.knee, g.ankle].filter(Boolean);
+      figure(ctx, (body.length >= 3 ? body : [g.hip, g.knee, g.ankle]).map(at), lw, g.ear ? at(g.ear) : null);
+      if (r.ghost?.side?.shift) label(ctx, `${r.ghost.side.target}°`, at({ x: g.knee.x, y: g.knee.y }), lw, g.knee.y > f.j.knee.y ? 1 : -1);
+    },
     draw(ctx, f, at, lw) {
       // overlayAt drops a joint the model lost between samples, so check
       // before mapping rather than drawing to undefined.
@@ -800,6 +815,14 @@ const ANGLE_VIEWS = {
     readout: (f) => {
       const v = [f.left, f.right].filter((x) => typeof x === "number");
       return v.length ? `${Math.max(...v.map(Math.abs)).toFixed(0)}°` : "–";
+    },
+    ghost: (r) => (r.front?.track?.length ? true : null),
+    ghostLabel: () => "The green figure is each knee tracking straight over its own foot.",
+    drawGhost(ctx, f, at, lw) {
+      const g = ghostFront(f.j);
+      if (!g) return;
+      for (const s of ["l", "r"])
+        if (g[`${s}knee`]) figure(ctx, [g[`${s}hip`], g[`${s}knee`], g[`${s}ankle`]].filter(Boolean).map(at), lw, null);
     },
     draw(ctx, f, at, lw) {
       /* Thigh as well as shin. The front pass reconstructs an occluded knee
@@ -820,6 +843,14 @@ const ANGLE_VIEWS = {
     track: (r) => r.rear?.track,
     trim: (r) => r.rear?.trim,
     readout: (f) => (typeof f.pelvis === "number" ? `${Math.abs(f.pelvis).toFixed(0)}°` : "–"),
+    ghost: (r) => (r.rear?.track?.length ? true : null),
+    ghostLabel: () => "The green figure is you with level hips and shoulders through the stroke.",
+    drawGhost(ctx, f, at, lw) {
+      const g = ghostRear(f.j);
+      if (!g) return;
+      for (const [l, rgt] of [["lsho", "rsho"], ["lhip", "rhip"]])
+        if (g[l] && g[rgt]) figure(ctx, [g[l], g[rgt]].map(at), lw, null);
+    },
     draw(ctx, f, at, lw) {
       for (const [l, rgt] of [["lsho", "rsho"], ["lhip", "rhip"]]) {
         if (!f.j[l] || !f.j[rgt]) continue;
@@ -842,6 +873,34 @@ function line(ctx, pts, colour, lw) {
   ctx.stroke();
   ctx.fillStyle = colour;
   for (const [x, y] of pts) { ctx.beginPath(); ctx.arc(x, y, lw * 1.1, 0, Math.PI * 2); ctx.fill(); }
+}
+
+/* The green figure: a soft wide body under a crisp core, always drawn before
+   the rider's own lines so the rider stays on top. */
+function figure(ctx, pts, lw, head) {
+  if (pts.length < 2) return;
+  const path = () => { ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); };
+  ctx.save();
+  ctx.lineJoin = ctx.lineCap = "round";
+  ctx.strokeStyle = "rgba(52,210,123,.30)"; ctx.lineWidth = lw * 5.2; path(); ctx.stroke();
+  ctx.strokeStyle = "rgba(52,210,123,.95)"; ctx.lineWidth = lw * 0.9; path(); ctx.stroke();
+  if (head) { ctx.fillStyle = "rgba(52,210,123,.30)"; ctx.beginPath(); ctx.arc(head[0], head[1], lw * 4.2, 0, Math.PI * 2); ctx.fill(); }
+  ctx.restore();
+}
+
+function label(ctx, text, [x, y], lw, below) {
+  const size = Math.max(12, lw * 3.6);
+  ctx.save();
+  ctx.font = `600 ${size}px "Barlow Condensed", "Arial Narrow", Arial, sans-serif`;
+  const tw = ctx.measureText(text).width, px = size * 0.4, py = size * 0.22;
+  const bx = x + size * 0.6, by = y + (below > 0 ? size * 0.6 : -size * 1.9);
+  ctx.fillStyle = "rgba(11,11,11,.78)";
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(bx, by, tw + px * 2, size + py * 2, size * 0.3); else ctx.rect(bx, by, tw + px * 2, size + py * 2);
+  ctx.fill();
+  ctx.fillStyle = IN_BAND;
+  ctx.fillText(text, bx + px, by + size + py * 0.05);
+  ctx.restore();
 }
 
 function dashed(ctx, a, b, lw) {
@@ -873,6 +932,7 @@ function wirePlayer(view, r, clips) {
   const seek = view.querySelector("#mvseek");
   const tabs = view.querySelector("#mvtabs");
   const cap = view.querySelector("#mvcap");
+  const ghostBtn = view.querySelector("#mvghost");
   if (!video || !clips?.side) return () => {};
 
   // Only angles that have both footage and something measured on them.
@@ -882,7 +942,7 @@ function wirePlayer(view, r, clips) {
   if (!available.length) return () => {};
 
   let angle = available[0];
-  let url = null, raf = null, showLines = true;
+  let url = null, raf = null, showLines = true, showGhost = true;
   const ctx = canvas.getContext("2d");
   const useVFC = typeof video.requestVideoFrameCallback === "function";
   const spec = () => ANGLE_VIEWS[angle];
@@ -909,9 +969,11 @@ function wirePlayer(view, r, clips) {
     if (!f) { live.textContent = "\u2013"; return; }
     live.textContent = spec().readout(f);
     live.style.color = f.inBand ? IN_BAND : OUT;
-    if (!showLines) return;
     const at = (p) => [box.x + p.x * box.w, box.y + p.y * box.h];
-    spec().draw(ctx, f, at, Math.max(3, box.w * 0.011));
+    const lw = Math.max(3, box.w * 0.011);
+    if (showGhost && spec().ghost?.(r)) spec().drawGhost(ctx, f, at, lw, r, video.videoWidth / video.videoHeight);
+    if (!showLines) return;
+    spec().draw(ctx, f, at, lw);
   }
 
   const loop = () => {
@@ -931,7 +993,8 @@ function wirePlayer(view, r, clips) {
     stop();
     angle = next;
     for (const b of tabs.querySelectorAll("button")) b.classList.toggle("on", b.dataset.a === angle);
-    cap.textContent = spec().caption;
+    cap.textContent = spec().caption + (spec().ghost?.(r) ? " " + spec().ghostLabel(r) : "");
+    ghostBtn.hidden = !spec().ghost?.(r);
     if (url) URL.revokeObjectURL(url);
     url = URL.createObjectURL(clips[angle]);
     video.src = url;
@@ -975,6 +1038,11 @@ function wirePlayer(view, r, clips) {
     };
   }
 
+  ghostBtn.onclick = () => {
+    showGhost = !showGhost;
+    ghostBtn.classList.toggle("on", showGhost);
+    draw();
+  };
   const linesBtn = view.querySelector("#mvlines");
   linesBtn.onclick = () => {
     showLines = !showLines;
@@ -994,10 +1062,12 @@ function wirePlayer(view, r, clips) {
       out.width = video.videoWidth; out.height = video.videoHeight;
       const g = out.getContext("2d");
       g.drawImage(video, 0, 0, out.width, out.height);
-      const f = showLines ? overlayAt(spec().track(r), video.currentTime) : null;
+      const f = (showLines || showGhost) ? overlayAt(spec().track(r), video.currentTime) : null;
       if (f) {
         const at = (p) => [p.x * out.width, p.y * out.height];
-        spec().draw(g, f, at, Math.max(4, out.width * 0.011));
+        const lw = Math.max(4, out.width * 0.011);
+        if (showGhost && spec().ghost?.(r)) spec().drawGhost(g, f, at, lw, r, out.width / out.height);
+        if (showLines) spec().draw(g, f, at, lw);
       }
       const blob = await new Promise((res) => out.toBlob(res, "image/jpeg", 0.92));
       const file = new File([blob], `form-${angle}-${Date.now()}.jpg`, { type: "image/jpeg" });
